@@ -137,7 +137,7 @@ int main()
 
         case 5: { // Multi-Start
             Cronometro cron;
-            double fo = multiStart(inst, s, 100);
+            double fo = multiStart(inst, s, 10000);
             std::cout << "fo = " << fo << '\n'
                        << "Tempo de execucao = " << cron.segundosDecorridos() << " segundos\n";
             imprimeRota(s);

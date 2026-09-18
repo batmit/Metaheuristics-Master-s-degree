@@ -5,6 +5,7 @@
 
 #include <numeric>   // std::iota
 #include <algorithm> // std::swap
+#include <iostream>
 
 // ============================================================================
 // [EXERCÍCIO]
@@ -44,6 +45,45 @@ double melhorVizinho(const Instancia &inst, std::vector<int> &s, double fo,
 
     //TODO
 
+    for(int i = 0; i < inst.n; i++){
+
+        
+        for(int j = i+1; j < inst.n; j++){
+
+
+            //No delta eu apenas calculo o custo das arestas
+
+            double deltaAntigo = calculaDelta(inst, s, i, j);
+            std::swap(s[i], s[j]);
+            double deltaNovo = calculaDelta(inst, s, i, j);
+            std::swap(s[i], s[j]);
+
+
+            double novoValor = fo + deltaNovo - deltaAntigo;
+
+            if(novoValor < foMelhorVizinho){
+                melhorI = i;
+                melhorJ = j;
+
+                foMelhorVizinho = novoValor;
+
+            }
+
+
+
+
+
+        }
+
+
+
+
+
+
+
+    }
+
+
     return foMelhorVizinho;
 }
 
@@ -58,9 +98,34 @@ double descidaCompleta(const Instancia &inst, std::vector<int> &s)
     limpaArquivo(arquivoLog);
     registraProgresso(arquivoLog, 0.0, 0, fo);
 
-    bool melhorou;
+    bool melhorou = true;
     
     //TODO
+
+    //toda vez que fizer troca tem que atualizar fo
+
+
+    while(melhorou){
+        //tenho que definir essas variáveis inicialmente, caso o contrário daria o erro de loop
+        int melhorI = -1, melhorJ = -1;
+
+        double novo = melhorVizinho(inst, s,  fo, melhorI, melhorJ);
+        if(novo < fo &&  melhorI != -1){
+
+            std::swap(s[melhorI], s[melhorJ]);
+
+            fo = novo; 
+
+
+
+        }else{
+            melhorou = false;
+        }
+
+
+    }
+
+
 
     return fo;
 }
@@ -97,10 +162,27 @@ double vizinhoRandomico(const Instancia &inst, std::vector<int> &s, double fo,
 // ============================================================================
 double descidaRandomica(const Instancia &inst, std::vector<int> &s, int iterMax)
 {
-    int n = inst.n;
+    //int n = inst.n;
     double fo = custo(inst, s);
     int iter = 0;
 
+    while(iter < iterMax){
+
+        int melhorI = 1, melhorJ = -1;
+
+        double melhora = vizinhoRandomico(inst, s, fo, melhorI, melhorJ);
+
+        if(melhora < fo){
+
+            std::swap(s[melhorI], s[melhorJ]);
+            fo = melhora;
+            iter = 0;
+        }else{
+            iter++;
+        }
+
+
+    }
     
     return fo;
 }
@@ -113,15 +195,51 @@ double vizinhoPrimeiroMelhora(const Instancia &inst, std::vector<int> &s, double
 {
     int n = inst.n;
     double foMelhorVizinho = fo;
-    bool melhorou = false;
+    //bool melhorou = false;
 
     // Visita as posições da rota em ordem aleatória, para não introduzir
     // um viés sistemático de sempre explorar as posições iniciais primeiro.
     std::vector<int> ordem(n);
     std::iota(ordem.begin(), ordem.end(), 0);
     embaralhaVetor(ordem);
+    //ordem é um vetor de índices já embaralhado, posso apenas percorrer ele
 
     //TODO
+    int pos1, pos2;
+    for(int i = 0; i < n; i++){
+
+        pos1 = ordem[i];
+
+        for(int j = i + 1; j < n; j++){
+
+            pos2 = ordem[j];
+
+            double deltaAntigo = calculaDelta(inst, s, pos1, pos2);
+
+            std::swap(s[pos1], s[pos2]);
+
+            double deltaNovo = calculaDelta(inst, s, pos1, pos2);
+
+            std::swap(s[pos1], s[pos2]);
+
+            double valorNovo = fo + deltaNovo - deltaAntigo;
+
+            if(valorNovo < fo){
+                melhorI = pos1;
+                melhorJ = pos2;
+
+                return valorNovo; 
+            }
+
+
+
+
+
+
+        }
+
+
+    }
 
     return foMelhorVizinho;
 }
@@ -137,9 +255,34 @@ double descidaPrimeiroMelhora(const Instancia &inst, std::vector<int> &s)
     limpaArquivo(arquivoLog);
     registraProgresso(arquivoLog, 0.0, 0, fo);
 
-    bool melhorou;
+    bool melhorou = true;
 
     //TODO
+
+    while(melhorou){
+        
+        int melhorI = -1, melhorJ = -1;
+
+        double melhora = vizinhoPrimeiroMelhora(inst, s, fo, melhorI, melhorJ);
+
+        if(melhorI != -1){
+
+            std::swap(s[melhorI], s[melhorJ]);
+            fo = melhora;
+
+        }else{
+
+            break;
+
+            //eu não preciso de contador pois a vizinho primeiro melhora já faz o percusso de N no último caso
+            //Logo, se não melhorar significa que chegamos em um mínimo local
+
+        }
+
+
+
+
+    }
 
     return fo;
 }
