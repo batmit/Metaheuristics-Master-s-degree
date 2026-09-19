@@ -24,7 +24,6 @@ double multiStart(const Instancia &inst, std::vector<int> &s, int itermax)
 
     std::vector<int> ValorAleatorio;
     double  fo = 0;
-
     for(int i = 0; i < itermax; i++){
 
         //Apenas pra construir o vetor de forma aleatória
@@ -40,15 +39,15 @@ double multiStart(const Instancia &inst, std::vector<int> &s, int itermax)
             foEstrela = fo;
             sEstrela = ValorAleatorio;
 
-            i = 0;
+            i = -1;
 
         }
 
 
 
 
-
     }
+
 
     s = sEstrela;
     return foEstrela;
