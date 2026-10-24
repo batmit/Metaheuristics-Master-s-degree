@@ -1,0 +1,61 @@
+• Tj ∈ R+: continuous variables representing the time at which the service
+of customer j ∈ C F is completed by the drones, T0 is the availability time
+for all vehicles at the depot.
+• α ∈ R+: continuous variable denoting the completion time, by which all
+the carriers are back to the depot.
+(CP 1) : min α (1)
+s.t. α ≥
+X
+i∈V
+X
+j∈V,i̸=j
+tijxij (2)
+α ≥ Tj j ∈ C F (3)
+xjj =
+X
+qj ≤k≤pj
+zk
+j j ∈ C F (4)
+Circuit(xij, with i, j ∈ V, j ̸= i if j ∈ C T ) (5)
+X
+j∈CF
+f0j ≤ m (6)
+X
+i∈CF ∪{0},i̸=j
+fij =
+X
+qj ≤k≤pj
+kz k
+j j ∈ C F (7)
+X
+i∈CF ∪{0},i̸=j
+fij =
+X
+l∈CF ∪{0},l̸=j
+fjl j ∈ C F ∪ {0} (8)
+fij ≤ myij i, j ∈ C F ∪ {0}, i ̸= j (9)
+yij =⇒ Tj ≥ Ti +
+X
+qj ≤k≤pj
+τ k
+j zk
+j i ∈ C F ∪ {0}, j ∈ C F , i ̸= j (10)
+0 ≤ fij ≤ m i, j ∈ C F ∪ {0}, i ̸= j (11)
+xij ∈ {0; 1} i, j ∈ V (12)
+zk
+j ∈ {0; 1} j ∈ C F , qj ≤ k ≤ pj (13)
+yij ∈ {0; 1} i, j ∈ C F ∪ {0}, i ̸= j (14)
+Tj ≥ 0 j ∈ C F ∪ {0} (15)
+Following the trivial objective function (1), the constraints have the following
+meaning. Constraint (2) says that the total time α has to be greater than
+or equal to the time required by the truck tour. Analogously, constraints (3)
+impose that α has to be greater than or equal to the completion time of the
+eventual drone mission to serve customer j. Given the logic of the variables,
+constraints (4) state that each drone-eligible customer has to be visited either
+by the truck or by a group of drones; Constraint (5) uses the CP-SAT method
+Circuit [22] to force a feasible truck tour, eventually skipping each customer
+j for which xjj = 1. Note that Circuit is invoked giving it all the variables
+xij with i ̸= j and all the variables xjj with j ̸∈ C T . This implies that xjj
+remains zero for all j ∈ C T , so all the customers that are not drone-eligible
+must be served by the truck. The Constraints (6)-(8) model the operations
+6

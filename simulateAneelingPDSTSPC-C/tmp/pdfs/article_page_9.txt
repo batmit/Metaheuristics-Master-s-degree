@@ -1,0 +1,55 @@
+(CP 2) min α (17)
+s.t. α ≥ T j + tj0xj0 j ∈ C (18)
+α ≥ T j j ∈ C F (19)
+xjj =
+X
+qj ≤k≤pj
+zk
+j j ∈ C F (20)
+MultipleCircuit(xij, with i, j ∈ V, i ̸= 0 ∨ j ̸= 0, j ̸= i if i ∈ C T ) (21)
+X
+j∈C
+x0j ≤ s (22)
+xij =⇒ T j ≥ T i + tij i ∈ V, j ∈ C , i ̸= j (23)
+X
+j∈CF
+f0j ≤ m (24)
+X
+i∈CF ∪{0},i̸=j
+fij =
+X
+qj ≤k≤pj
+kz k
+j j ∈ C F (25)
+X
+i∈CF ∪{0},i̸=j
+fij =
+X
+l∈CF ∪{0},l̸=j
+fjl j ∈ C F ∪ {0} (26)
+fij ≤ myij i, j ∈ C F ∪ {0}, i ̸= j (27)
+yij =⇒ T j ≥ T i +
+X
+qj ≤k≤pj
+τ k
+j zk
+j i ∈ C F ∪ {0}, j ∈ C F , i ̸= j (28)
+0 ≤ fij ≤ m i, j ∈ C F ∪ {0}, i ̸= j (29)
+xij ∈ {0; 1} i, j ∈ V (30)
+zk
+j ∈ {0; 1} j ∈ C F , qj ≤ k ≤ pj (31)
+yij ∈ {0; 1} i, j ∈ C F ∪ {0}, i ̸= j (32)
+T j ≥ 0 j ∈ V (33)
+The constraints strictly follow the meaning already described for the CP 1
+model in Section 2.2. The only changes are as follows. Constraint (18) now
+defines α based on the time required by each truck to go back to the depot after
+visiting each of its assigned customers. This constraint is valid since the travel
+times satisfy the triangular property, although it could be made valid also for the
+general case with the use of a OnlyEnforceIf statement (see below). Constraint
+(21) describes a set of circuits through the MultipleCircuit command of CP-SAT
+([22]) to reflect we are now dealing with several tours instead of one. The new
+constraint (22) forces the number of tours to be maximum s. Whereas the new
+constraints (23) calculate the service start time for each customer visited by a
+truck (remember that = ⇒ indicates the OnlyEnforceIf, which activates the
+constraint iif xij = 1).
+9

@@ -1,0 +1,70 @@
+(M ILP) min α (51)
+s.t. α ≥
+X
+i∈V
+X
+j∈V,i̸=j
+tijwk
+ij k ∈ S (52)
+α ≥ Tj j ∈ C F (53)
+X
+k∈S
+uk
+j +
+X
+qj ≤k≤pj
+zk
+j = 1 j ∈ C F (54)
+X
+k∈S
+uk
+j = 1 j ∈ C T (55)
+uk
+j ≤ uk
+0 j ∈ C , k ∈ S (56)
+X
+i∈V,i̸=j
+wk
+ij +
+X
+l∈V,l̸=j
+wk
+jl = 2uh
+j j ∈ V, k ∈ S (57)
+X
+i,j∈H,i̸=j
+wk
+ij ≤ |H| − 1 H ⊆ C , k ∈ S (58)
+fij
+m ≤ yij ≤ fij i, j ∈ C F ∪ {0}, i ̸= j (59)
+Tj + M(1 − yij) ≥ Ti +
+X
+qj ≤k≤pj
+τ k
+j zk
+j i ∈ C F ∪ {0}, j ∈ C F , i ̸= j (60)
+0 ≤ fij ≤ m i, j ∈ C F , i ̸= j (61)
+wk
+ij ∈ {0; 1} k ∈ S, i, j ∈ V, i ̸= j (62)
+zk
+j ∈ {0; 1} j ∈ C F , qj ≤ k ≤ pj (63)
+uk
+j ∈ {0; 1} j ∈ C , k ∈ S (64)
+yij ∈ {0; 1} i, j ∈ C F ∪ {0}, i ̸= j (65)
+Tj ≥ 0 j ∈ C F ∪ {0} (66)
+The model minimizes the time to serve all the customers (51). Constraints
+(52) force α to be larger than any tour of the trucks, and inequalities (53)
+guarantee that α is larger than the completion time of any drone’s mission time.
+Equations (54) assign customers from CF to either a drone or a truck, while
+constraints (55) force the customers that can be visited only by a truck ( CT )
+to receive such a visit. Inequalities (56) impose that a customer can be visited
+by a truck only if it is in use. Equalities (57) are flow conservation constraints
+for the truck tours. Inequalities (58) are subtour elimination constraints [1] and
+guarantee that truck tours are circuits including the depot. Note that these
+constraints are exponential in number, depending on any possible subset H of
+C. In our implementation, they will be generated dynamically as described in
+Section 3.4.1 below. Constraints (59) refers to the flow of drones and guarantee
+that the number of drones going from customer i to j must be lower than m,
+only if there is a flow from i to j. Inequalities (60) regulate completion of
+the service time for the customers visited by the drones. Finally, constraints
+12

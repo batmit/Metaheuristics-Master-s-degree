@@ -1,0 +1,72 @@
+3.3. A 3-indices Constraint Programming model
+This model is another extension of the CP 1 model in Section 2.2 that uses s
+separate sets of variables to describe the tours of the s trucks. All the variables
+remain the same, apart from the xs which are substituted by a set of variables
+w such that wk
+ij = 1 if edge ( i, j) is traveled by truck k ∈ S, 0 otherwise. Note
+that wk
+jj = 1 means that customer j is not served by truck k, hence it is not
+part of its tour. In addition, wk
+00 = 1 means that truck k is not operated in the
+solution. Note that differently from model CP 2, here all the loop variables for
+the truck are inserted when invoking the method Circuit used to find a circuit
+for each truck, see (39) below. Finally note that the timing variables T are the
+same used in model CP 1 of Section 2.2.
+(CP 3) min α (34)
+s.t. α ≥
+X
+i∈V
+X
+j∈V,i̸=j
+tijwk
+ij k ∈ S (35)
+α ≥ Tj j ∈ C F (36)
+sX
+k=1
+(1 − wk
+jj) =
+X
+qj ≤k≤pj
+zk
+j j ∈ C F (37)
+sX
+k=1
+wk
+jj = s − 1 j ∈ C T (38)
+Circuit(wk
+ij, with i, j ∈ V ) k ∈ S (39)
+wk
+ij ≤ 1 − wk
+00 k ∈ S, i, j ∈ C (40)
+X
+j∈CF
+f0j ≤ m (41)
+X
+i∈CF ∪{0},i̸=j
+fij =
+X
+qj ≤k≤pj
+kz k
+j j ∈ C F (42)
+X
+i∈CF ∪{0},i̸=j
+fij =
+X
+l∈CF ∪{0},l̸=j
+fjl j ∈ C F ∪ {0} (43)
+fij ≤ myij i, j ∈ C F ∪ {0}, i ̸= j (44)
+yij =⇒ Tj ≥ Ti +
+X
+qj ≤k≤pj
+τ k
+j zk
+j i ∈ C F ∪ {0}, j ∈ C F , i ̸= j (45)
+0 ≤ fij ≤ m i, j ∈ C F ∪ {0}, i ̸= j (46)
+wk
+ij ∈ {0; 1} k ∈ S, i, j ∈ V (47)
+zk
+j ∈ {0; 1} j ∈ C F , qj ≤ k ≤ pj (48)
+yij ∈ {0; 1} i, j ∈ C F ∪ {0}, i ̸= j (49)
+Tj ≥ 0 j ∈ C F ∪ {0} (50)
+The constraints strictly follow the meaning already described for the CP 1
+10

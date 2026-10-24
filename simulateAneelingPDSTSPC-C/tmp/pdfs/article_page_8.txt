@@ -1,0 +1,22 @@
+traveling speed. No concept of collaboration exists for the trucks and each
+customer has to be served either by one of the trucks or by drones.
+Having a fleet does not change substantially the problem, but has an impact
+on the optimization since we now have to plan multiple tours and account for
+the mission time of each truck while calculating the completion time α. We will
+see in the next sections two alternative Constraint Programming models and a
+Mixed Integer Linear Programming formulation.
+3.2. A 2-indices Constraint Programming model
+This model is the direct extension of that discussed in Section 2.2 for the
+CP 1 and delegates the Constraint Programming solver to handle the multiple
+truck tours. The variables remain the same, although now the x can take the
+shape of multiple tours instead of a single one. Another important difference is
+the definition of the variables Tj. In the CP 1 model of Section 2.2, they are only
+related to the drones and represent the time in which the service of a customer
+is completed. Here, they are extended to the customers served by the trucks and
+represent the starting time of the service of the truck to the customer. Formally
+we use the new variables T with the following meaning
+• T j ∈ R+: continuous variables representing the time at which the service
+of customer j ∈ C F is completed, if the customer is served by drones, or
+the service is started if the customer is served by a truck. T 0 denotes the
+availabilty time at the depot for all vehicles.
+8

@@ -492,6 +492,224 @@ int escalonarMissoesDrone(const Instancia *inst, Solucao *solucao){
     return escalonarDesde(inst, solucao, NULL, 0);
 }
 
+/* Branch and Bound: escolhe a quantidade de drones e a ordem das missoes.
+ * Cada ramo escolhe a proxima missao de uma ordem de prioridades e a insere
+ * no primeiro intervalo viavel. Enumerar essas ordens cobre os cronogramas
+ * ativos; existe um otimo ativo para minimizar o makespan neste modelo. */
+typedef struct BuscaDroneBB {
+    int quantidade;
+    int frota;
+    MissaoDrone *tarefas;
+    const Instancia *inst;
+    long double *cargaMinima;
+    bool temposInteiros;
+    bool *usadas;
+    MissaoDrone *parcial;
+    MissaoDrone *melhor;
+    double limiteSuperior;
+} BuscaDroneBB;
+
+static bool intervaloViavelBB(const BuscaDroneBB *b, int nivel,
+                              double inicio, double fim, int drones)
+{
+    if (!isfinite(fim)) return false;
+    if (inicio == fim) return true;
+    /* O consumo so aumenta no inicio da candidata ou de uma tarefa existente. */
+    for (int evento = -1; evento < nivel; evento++) {
+        double instante = evento < 0 ? inicio : b->parcial[evento].tempoInicio;
+        if (instante < inicio || instante >= fim) continue;
+        int livres = b->frota - drones;
+        for (int j = 0; j < nivel; j++) {
+            const MissaoDrone *m = &b->parcial[j];
+            if (m->tempoInicio <= instante && instante < m->tempoFim) {
+                if (m->qtdDrones > livres) return false;
+                livres -= m->qtdDrones;
+            }
+        }
+    }
+    return true;
+}
+
+static double primeiroInicioBB(const BuscaDroneBB *b, int nivel, double duracao, int drones)
+{
+    if (intervaloViavelBB(b, nivel, 0.0, duracao, drones)) return 0.0;
+    double melhor = INFINITY;
+    /* Se zero nao serve, o primeiro inicio viavel coincide com algum retorno. */
+    for (int i = 0; i < nivel; i++) {
+        double inicio = b->parcial[i].tempoFim;
+        if (inicio < melhor && intervaloViavelBB(b, nivel, inicio,
+                                                 inicio + duracao, drones))
+            melhor = inicio;
+    }
+    return melhor;
+}
+
+/* Cada configuracao e filtrada individualmente, inclusive lacunas na matriz. */
+static double duracaoConfiguracaoBB(const BuscaDroneBB *b, int tarefa, int k)
+{
+    int cliente = b->tarefas[tarefa].cliente;
+    if (k < b->inst->clientes[cliente].minDrones) return INFINITY;
+    double tempo = b->inst->tempoDrone[cliente][k];
+    return isfinite(tempo) && tempo >= 0.0 ? tempo : INFINITY;
+}
+
+static bool tarefasEquivalentesBB(const BuscaDroneBB *b, int i, int j)
+{
+    /* Simetria exige o perfil inteiro, nao somente uma duracao escolhida. */
+    for (int k = 1; k <= b->frota; k++)
+        if (duracaoConfiguracaoBB(b, i, k) != duracaoConfiguracaoBB(b, j, k))
+            return false;
+    return true;
+}
+
+/* Desigualdade (16), Secao 2.3, Montemanni et al. (2024):
+ * m * Cmax >= soma(k * tau). Para escolhas abertas, usa min_k(k * tau).
+ * O consumo fixado substitui o minimo de cada tarefa ja escolhida.
+ * Nao se soma makespan parcial: isso contaria trabalho duas vezes.
+ * Arredondamento dirigido para baixo mantem o limite conservador. */
+static long double limiteCargaDroneBB(const BuscaDroneBB *b, long double cargaFixada)
+{
+    long double carga = cargaFixada;
+    for (int i = 0; i < b->quantidade; i++)
+        if (!b->usadas[i])
+            carga = nextafterl(carga + b->cargaMinima[i], -INFINITY);
+    long double limite = nextafterl(carga / b->frota, -INFINITY);
+    /* Somente tempos inteiros garantem um makespan otimo inteiro. */
+    return b->temposInteiros ? ceill(limite) : limite;
+}
+
+static void explorarDroneBB(BuscaDroneBB *b, int nivel, double makespan,
+                           long double cargaFixada)
+{
+    if (makespan >= b->limiteSuperior) return;
+    if (nivel == b->quantidade) {
+        b->limiteSuperior = makespan;
+        memcpy(b->melhor, b->parcial, (size_t)nivel * sizeof *b->melhor);
+        return;
+    }
+    if (limiteCargaDroneBB(b, cargaFixada) >= (long double)b->limiteSuperior)
+        return;
+    /* Limite por missao: considera o melhor encaixe entre TODAS as
+     * configuracoes viaveis, para nao podar escolhas melhores de quantidade. */
+    for (int i = 0; i < b->quantidade; i++) {
+        if (b->usadas[i]) continue;
+        double menorFim = INFINITY;
+        for (int k = 1; k <= b->frota; k++) {
+            double duracao = duracaoConfiguracaoBB(b, i, k);
+            if (!isfinite(duracao)) continue;
+            double inicio = primeiroInicioBB(b, nivel, duracao, k);
+            menorFim = fmin(menorFim, inicio + duracao);
+        }
+        if (menorFim >= b->limiteSuperior) return;
+    }
+    for (int i = 0; i < b->quantidade; i++) {
+        if (b->usadas[i]) continue;
+        bool simetrica = false;
+        for (int j = 0; j < i; j++) {
+            if (!b->usadas[j] && tarefasEquivalentesBB(b, i, j)) {
+                simetrica = true;
+                break;
+            }
+        }
+        if (simetrica) continue;
+        for (int k = 1; k <= b->frota; k++) {
+            double duracao = duracaoConfiguracaoBB(b, i, k);
+            if (!isfinite(duracao)) continue;
+            double inicio = primeiroInicioBB(b, nivel, duracao, k);
+            double fim = inicio + duracao;
+            if (!isfinite(fim) || fim >= b->limiteSuperior) continue;
+            b->parcial[nivel] = b->tarefas[i];
+            b->parcial[nivel].qtdDrones = k;
+            b->parcial[nivel].tempoInicio = inicio;
+            b->parcial[nivel].tempoFim = fim;
+            b->usadas[i] = true;
+            long double consumo = nextafterl((long double)k * duracao, -INFINITY);
+            long double novaCarga = nextafterl(cargaFixada + consumo, -INFINITY);
+            explorarDroneBB(b, nivel + 1, fmax(makespan, fim), novaCarga);
+            b->usadas[i] = false;
+        }
+    }
+}
+
+double escalonarMissoesDroneBB(const Instancia *inst, MissaoDrone *missoes,
+                               int quantidade)
+{
+    if (inst == NULL || inst->n < 1 || inst->numDrones < 0 ||
+        quantidade < 0 || quantidade > inst->n - 1) return INFINITY;
+    if (quantidade == 0) return 0.0;
+    if (missoes == NULL || inst->clientes == NULL || inst->tempoDrone == NULL ||
+        inst->numDrones == 0) return INFINITY;
+    BuscaDroneBB b = {0};
+    b.inst = inst;
+    b.temposInteiros = true;
+    b.quantidade = quantidade;
+    b.frota = inst->numDrones;
+    b.limiteSuperior = INFINITY;
+    b.tarefas = malloc((size_t)quantidade * sizeof *b.tarefas);
+    b.cargaMinima = malloc((size_t)quantidade * sizeof *b.cargaMinima);
+    b.usadas = calloc((size_t)quantidade, sizeof *b.usadas);
+    b.parcial = malloc((size_t)quantidade * sizeof *b.parcial);
+    b.melhor = malloc((size_t)quantidade * sizeof *b.melhor);
+    if (!b.tarefas || !b.cargaMinima || !b.usadas || !b.parcial || !b.melhor)
+        goto finalizar;
+    for (int i = 0; i < quantidade; i++) {
+        int cliente = missoes[i].cliente;
+        if (cliente <= 0 || cliente >= inst->n ||
+            !inst->clientes[cliente].elegivelDrone || inst->tempoDrone[cliente] == NULL)
+            goto finalizar;
+        for (int j = 0; j < i; j++)
+            if (missoes[j].cliente == cliente) goto finalizar;
+        int minimo = inst->clientes[cliente].minDrones;
+        if (minimo < 1 || minimo > inst->numDrones) goto finalizar;
+        b.tarefas[i] = missoes[i];
+        bool viavel = false;
+        b.cargaMinima[i] = INFINITY;
+        for (int k = minimo; k <= inst->numDrones; k++) {
+            double duracao = duracaoConfiguracaoBB(&b, i, k);
+            if (!isfinite(duracao)) continue;
+            viavel = true;
+            if (floor(duracao) != duracao) b.temposInteiros = false;
+            long double consumo = nextafterl((long double)k * duracao, -INFINITY);
+            b.cargaMinima[i] = fminl(b.cargaMinima[i], consumo);
+        }
+        if (!viavel) goto finalizar;
+    }
+    /* Solucao viavel inicial para limitar a arvore desde a raiz. */
+    double maximo = 0.0;
+    for (int i = 0; i < quantidade; i++) {
+        double melhorInicio = 0.0, fim = INFINITY;
+        int melhorK = 0;
+        for (int k = 1; k <= b.frota; k++) {
+            double duracao = duracaoConfiguracaoBB(&b, i, k);
+            if (!isfinite(duracao)) continue;
+            double inicio = primeiroInicioBB(&b, i, duracao, k);
+            if (inicio + duracao < fim) {
+                melhorInicio = inicio;
+                fim = inicio + duracao;
+                melhorK = k;
+            }
+        }
+        if (!isfinite(fim)) goto finalizar;
+        b.parcial[i] = b.tarefas[i];
+        b.parcial[i].qtdDrones = melhorK;
+        b.parcial[i].tempoInicio = melhorInicio;
+        b.parcial[i].tempoFim = fim;
+        maximo = fmax(maximo, fim);
+    }
+    b.limiteSuperior = maximo;
+    memcpy(b.melhor, b.parcial, (size_t)quantidade * sizeof *b.melhor);
+    explorarDroneBB(&b, 0, 0.0, 0.0L);
+    /* Publica apenas depois de concluir a prova de otimalidade. */
+    memcpy(missoes, b.melhor, (size_t)quantidade * sizeof *missoes);
+finalizar:
+    free(b.tarefas);
+    free(b.cargaMinima);
+    free(b.usadas);
+    free(b.parcial);
+    free(b.melhor);
+    return b.limiteSuperior;
+}
+
 int gerarVizinhoAvaliado(const Instancia *inst, const Solucao *atual, Solucao *vizinho){
     if (inst == NULL || atual == NULL || vizinho == NULL ||
         !atual->avaliacaoValida || !atual->cronogramaValido ||

@@ -43,6 +43,23 @@ int gerarVizinhoAvaliado(const Instancia *inst, const Solucao *atual, Solucao *v
  * Pressupoe drones identicos com saida e retorno ao deposito. */
 int escalonarMissoesDrone(const Instancia *inst, Solucao *solucao);
 
+/* Branch and Bound exato para o subconjunto recebido, escolhendo ordem,
+ * horarios e quantidade de drones entre minDrones e numDrones com tempo viavel.
+ * qtdDrones e horarios de entrada sao ignorados; sao decisoes de saida.
+ * Recebe apenas o vetor de missoes (nao a Solucao), sua quantidade e a
+ * instancia que informa frota, elegibilidade e tempos por cliente/quantidade.
+ * Retorna o makespan otimo dos drones e publica ordem/horarios no vetor.
+ * Retorna INFINITY em dados invalidos ou falha de memoria, sem alterar o vetor;
+ * conjunto vazio retorna zero. Sem limite de busca: custo exponencial.
+ * Poda pela carga de drone-tempo / frota (desigualdade 16 do artigo),
+ * usando consumo real nas escolhas fixadas e minimo viavel nas restantes.
+ * Combina esse limite com makespan parcial e primeiro termino por missao.
+ * Nao altera o conjunto de clientes atribuidos aos drones ou ao caminhao.
+ * Se o vetor pertencer a Solucao, invalidar cronogramaValido/avaliacaoValida:
+ * seus caches de prefixos nao sao reconstruidos por esta funcao. */
+double escalonarMissoesDroneBB(const Instancia *inst, MissaoDrone *missoes,
+                               int quantidade);
+
 /* Caminhao: clientes sem os depositos inicial/final, implicitos no indice 0.
  * Drones: horarios em minutos e tempoDrone incluindo a missao completa.
  * Retorna 1 para solucao viavel; 0 e makespan INFINITY em caso de erro.

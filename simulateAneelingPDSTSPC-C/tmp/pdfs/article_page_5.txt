@@ -1,0 +1,44 @@
+truck performs its task within a single tour, beginning from the depot, traversing
+through all assigned customers, and returning to the depot. The truck travel
+times between pairs of vertices i, j ∈ V is given as tij. Matrix [ tij] satisfies the
+triangular inequality tik ≤ tij + tjk , i, j, k ∈ V . The drones have to perform
+back-and-forth trips between the depot and the customers’ locations to deliver
+the parcels. Travel times and ranges of drone missions depend on factors such
+as the number of drones cooperating and the traveling speed. Given a customer
+i and a number k of drones executing the mission, it is possible to pre-calculate
+the optimal speed and consequently the total travel time τ k
+i for the back-and-
+forth trip. When it is not possible to service a customer i for some values of
+k, then τ k
+i is set to + ∞. We group such customers in set CT ⊊ C. Instead,
+let CF = C \ C T denote the (sub)set of customers that may be served with
+some drones’ configuration, and let qj and pj be the minimum and maximum
+number of drones to serve a customer j ∈ C F (observe that in the cited model
+the number of drones that can serve a customer always define an interval). We
+adopted the realistic model described in [17] for the calculation of their travel
+times, and we refer the interested reader to this paper for full details.
+Note that a main difficulty of the problem is that once k drones collaborate
+for a delivery mission, strict synchronization constraints must be fulfilled. The
+objective of the PDSTSP-c is to find a truck tour, drone-customer assignments,
+and drones scheduling that minimize the makespan (i.e., the maximum com-
+pletion time at which all vehicles are back at the depot after completing their
+services) while fulfilling all the constraints and conditions listed above.
+2.2. A Constraint Programming model
+The Constraint Programming model we present is based on the Google-
+OR CP-SAT solver [22] and follows the ideas behind the Mixed Integer Linear
+Program described in [17]. In particular, drone missions are modeled through
+a flow. Changes have however been introduced to take full advantage of the
+characteristic of the solver used.
+The variables used in the model are as follows:
+• xij: binary variables equal to 1 ( true) if edge ( i, j), with i, j ∈ C , is
+traveled by the truck, 0 ( false) otherwise. Whereas a loop xjj = 1 means
+that customer j is served by drones, while xjj = 0 if it is served by the
+truck.
+• zk
+j : binary variables equal to 1 if customer j ∈ C F is served by k drones,
+0 otherwise.
+• yij: binary variables equal to 1 if customeri is served right before customer
+j within the schedule of any drone, 0 otherwise.
+• fij ∈ R+: continuous flow variables indicating number of drones serving
+customer i right before customer j in their schedule.
+5

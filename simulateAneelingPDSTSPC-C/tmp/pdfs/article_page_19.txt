@@ -1,0 +1,24 @@
+Table 4: Experimental results on the PDSVRP-c. Small instances, 3 trucks.
+M ILP+(16)a CP2+(16)b CP3+(16)b BestInstance [LB, UB] Sectot Secbst [LB, UB] Sectot Secbst [LB, UB] Sectot Secbst bounds
+15-r-e [72, 92] - 3401.20 [ 92, 92] 331.05 0.19 [ 92, 92] 4.44 0.36 9215-rc-c [32, 32] 11.08 11.01 [ 32, 32] 1.43 1.27 [ 32, 32] 5.95 3.66 3216-c-c [ 36, 36] 2.20 2.18 [ 36, 36] 1.21 1.17 [ 36, 36] 6.01 5.41 3616-r-e [68, 108] - 2332.97 [ 108, 108] 290.7 1.05 [ 108, 108] 6.55 1.15 10818-c-c [ 44, 44] 25.27 25.21 [ 44, 44] 3.02 1.61 [ 44, 44] 6.37 2.12 4418-r-e [88, 92] - 614.09 [ 92, 92] 22.3 0.92 [ 92, 92] 12 2.1 9218-rc-c [40, 40] 18.60 18.53 [ 40, 40] 5.22 5.09 [ 40, 40] 30.65 24.69 4019-c-c [29, 36] - 3554.00 [ 36, 36] 2.26 0.86 [ 36, 36] 19.25 3.59 3620-c-c [ 40, 40] 383.19 139.78 [ 40, 40] 1.9 0.72 [ 40, 40] 7.35 1.27 4020-r-c [ 37, 37] 1202.72 582.24 [ 37, 37] 8.3 3.81 [ 37, 37] 99.17 36.74 3720-r-e [44, 72] - 45.40 [ 72, 72] 443.37 7.4 [ 72, 72] 17.12 9.27 7220-rc-c [48, 48] 604.42 8.91 [ 48, 48] 99.53 3.15 [ 48, 48] 94.88 26.53 4820-rc-e [60,68] - 595.63 [ 68, 68] 122.18 42 [ 68, 68] 45.74 8.25 6821-c-c [ 36, 36] 28.87 6.92 [ 36, 36] 4.96 4.75 [ 36, 36] 16.5 7.81 3621-r-e [34, 76] - 689.44 [ 76, 76] 891.56 11.3 [ 76, 76] 427.99 28.05 7623-c-e [36, 80] - 3.88 [66, 80] - 0.94 [ 80, 80] 25.44 0.93 8023-r-c [ 48, 48] 203.22 44.94 [ 48, 48] 20.92 14.24 [ 48, 48] 590.1 135.03 4824-c-e [56, 60] - 2000.96 [ 60, 60] 135.61 3.35 [ 60, 60] 28.56 11.45 6024-r-e [47, 100] - 8.28 [80, 100] - 1.72 [ 100, 100] 64.88 8.77 10024-rc-c [41,44] - 3456.94 [ 44, 44] 227.22 77.94 [ 44, 44] 926.73 387.43 4425-c-c [30, 40] - 97.39 [ 37, 37] 70.58 31.83 [ 37, 37] 107.3 42.94 3725-r-e [57, 96] - 3298.63 [59, 85] - 44.6 [ 85, 85] 404.43 242.54 8525-rc-e [52, 69] - 2601.65 [65, 66] - 141.25 [ 66, 66] 356.83 61.26 6626-r-c [ 56, 56] 180.88 67.14 [52, 56] - 1399.21 [55, 56] - 70.15 5627-c-c [ 36, 36] 1367.86 936.48 [ 36, 36] 577.74 3.69 [ 36, 36] 121.7 39.48 3627-c-e [8, 68] - 4.92 [ 68, 68] 2315.01 1.31 [ 68, 68] 437.75 1.71 6827-rc-c [60, 60] 223.20 213.85 [ 60, 60] 6.79 6.01 [ 60, 60] 74.79 63.9 6027-rc-e [28,76] - 155.68 [56, 76] - 8.02 [ 76, 76] 520.4 14.61 7629-rc-e [53, 108] - 3337.59 [72, 100] - 23.67 [ 100, 100] 56.98 35.42 10030-c-c [26, 38] - 3182.76 [ 38, 38] 96.12 5.63 [ 38, 38] 145.11 15.99 38
+aCPU Intel Core i7 12700F - 4x3.6 GHz, 8x4.9 GHz, 20 threads; RAM 32 GB; Gurobi 10.0; 3600 sec time limitbCPU Intel Core i7 12700F - 4x3.6 GHz, 8x4.9 GHz, 20 threads; RAM 32 GB; OR-Tools CP-SAT 9.6; 3600 sec timelimit
+One can also observe that the performances of M ILP degrade with the in-
+creasing of the instance size, much more than that of the CP methods. After
+some test with larger instances (not reported here), and considering the anal-
+ogous decision made for the PDSTSP-c in [17], we decided to not consider the
+M ILP for the experiments on large instances (Tables 5-8).
+The results of the two CP models suggest that the 3-indices formulation
+(CP 3) is superior, being able to close all the instances but one. The 2-indices
+model appears slower even though the quality of its upper bounds is the same of
+CP 3. This highlights that the weakness of the CP 2 model is in the computation
+of the lower bound.
+The results reported in Tables 5-8 for large instances (note that the column
+Sectot has been omitted, since no optimality is proven) and a varying number
+of trucks lead to the following observations. The model with 3 indices, which
+performs the best on small instances (see Tables 3 and 4), is instead performing
+worse than the 2-indices model on large ones, especially in terms of retrieved
+lower bounds. This might suggest that handling multiple truck tours with the
+MultipleCircuit command becomes effective when tours are complex.
+There are however a few exceptions where the 3-indices model is better either
+in terms of lower or upper bounds. Specifically, the CP 3 model appears to be
+19
