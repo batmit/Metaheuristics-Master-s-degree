@@ -21,13 +21,22 @@ int construirSolucaoInicial(const Instancia *inst, Solucao *solucao);
 
 /* atual deve conter cada cliente uma unica vez. vizinho deve estar alocado
  * por alocarSolucao para a mesma instancia, com vetores independentes.
- * Aplica uma troca ou transferencia aleatoria sem modificar atual.
+ * Aplica troca, transferencia ou alteracao aleatoria da quantidade de drones
+ * de uma missao, entre minDrones e numDrones com tempo viavel, sem modificar atual.
  * Retorna 1 no sucesso, com makespan INFINITY e horarios a reconstruir;
  * retorna 0 sem alterar vizinho se nao houver movimento ou os dados forem invalidos.
  * Inicializar srand uma unica vez no programa, nunca a cada chamada. */
 int gerarVizinho(const Instancia *inst, const Solucao *atual, Solucao *vizinho);
 
-/* Processa missaoDrone na ordem do vetor, usando minDrones por cliente.
+/* Requer atual escalonada e avaliada, e ambas alocadas para esta instancia.
+ * Instancia e solucao atual nao podem ter sido editadas desde a avaliacao.
+ * Atualiza apenas as arestas afetadas e reescala o sufixo de drones alterado.
+ * Retorna vizinho com makespan pronto; nao exige avaliacao completa adicional.
+ * Falha de avaliacao deixa o vizinho invalidado. A atual permanece intacta. */
+int gerarVizinhoAvaliado(const Instancia *inst, const Solucao *atual, Solucao *vizinho);
+
+/* Processa missaoDrone na ordem do vetor, respeitando qtdDrones por missao.
+ * Quantidade zero usa minDrones por cliente; quantidades invalidas falham.
  * Reconstroi os horarios desde o instante zero; nao calcula o makespan.
  * Retorna 1 no sucesso. Na falha, preserva as missoes anteriores.
  * Em ambos os casos invalida o makespan (INFINITY); reavaliar apos sucesso.

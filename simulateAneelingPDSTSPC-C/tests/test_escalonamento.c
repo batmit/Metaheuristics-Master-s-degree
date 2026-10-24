@@ -36,10 +36,20 @@ int main(void)
 
     /* Mudanca de sequencia muda o cronograma. */
     missoes[0].cliente = 3; missoes[2].cliente = 1;
+    missoes[0].qtdDrones = 0; missoes[2].qtdDrones = 0;
     assert(escalonarMissoesDrone(&inst, &s));
     assert(missoes[0].tempoFim == 8);
     assert(missoes[1].tempoInicio == 8 && missoes[1].tempoFim == 14);
     assert(missoes[2].tempoInicio == 8 && missoes[2].tempoFim == 18);
+
+    /* Preserva a quantidade escolhida e utiliza a duracao correspondente. */
+    missoes[2].qtdDrones = 3;
+    assert(escalonarMissoesDrone(&inst, &s));
+    assert(missoes[2].qtdDrones == 3);
+    assert(missoes[2].tempoInicio == 14 && missoes[2].tempoFim == 23);
+    missoes[2].qtdDrones = 1;
+    assert(!escalonarMissoesDrone(&inst, &s));
+    missoes[2].qtdDrones = 2;
 
     /* Falha posterior nao publica um cronograma parcial. */
     clientes[1].elegivelDrone = false;

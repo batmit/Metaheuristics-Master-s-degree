@@ -76,6 +76,12 @@ typedef struct Solucao {
     int numMissoesDrone;
 
     double makespan;
+    double tempoCaminhao;
+    double tempoDrones;
+    /* Estado da frota apos cada prefixo: numDrones disponibilidades + maximo. */
+    double *prefixosDrone;
+    bool cronogramaValido;
+    bool avaliacaoValida;
 
 }Solucao;
 

@@ -6,6 +6,7 @@
 #include <numeric>    // std::iota
 #include <limits>
 #include <cstddef>
+#include <cmath>
 
 // ============================================================================
 // [EXERCÍCIO] Vizinho Mais Próximo (guloso)
@@ -114,8 +115,41 @@ double constroiSolucaoParcialmenteGulosaVizinhoMaisProximo(const Instancia &inst
     s.assign(n, -1);
     s[0] = 0;
 
-    
+    int iterS = 0;
     //TODO
+
+    std::vector<std::pair<int, double>> g;
+    int LCR = 0, ultimaInserida = 0;
+    double gMin, gMax, gAlpha;
+
+    while(!naoVisitadas.empty()){
+    
+        for(int cidade : naoVisitadas){
+            g.push_back(std::pair<int, double>(cidade, inst.distancia(s[iterS], cidade)));
+        }
+        std::sort(g.begin(), g.end(), [](std::pair<int, double> &g1, std::pair<int, double> &g2){
+            return g1.second < g2.second;
+        });
+        gMin = g.front().second;
+        gMax = g.back().second;
+
+        LCR = std::ceil(std::max(1.0, alpha * g.size()));
+
+        if(LCR == 1){
+            ultimaInserida = 0;
+        }
+        else{
+            ultimaInserida = inteiroAleatorio(0, LCR - 1);
+        }
+        
+
+
+        s[++iterS] = g.at(ultimaInserida).first;
+        fo += g.at(ultimaInserida).second;
+        
+        naoVisitadas.erase(std::find(naoVisitadas.begin(), naoVisitadas.end(), g.at(ultimaInserida).first));
+        g.erase(g.begin(), g.end());  
+    }
 
     return fo;
 }

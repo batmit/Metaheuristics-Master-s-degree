@@ -19,7 +19,7 @@ int main(void)
     Missao *copiaC = malloc(inst.n * sizeof *copiaC);
     MissaoDrone *copiaD = malloc(inst.n * sizeof *copiaD);
     assert(copiaC && copiaD);
-    int movimentos[4] = {0};
+    int movimentos[5] = {0};
     srand(123);
     for (int iteracao = 0; iteracao < 2000; iteracao++) {
         memcpy(copiaC, atual.missaoCaminhao, inst.n * sizeof *copiaC);
@@ -36,13 +36,30 @@ int main(void)
         else if (vizinho.numMissoesDrone < atual.numMissoesDrone) movimentos[3]++;
         else if (memcmp(copiaC, vizinho.missaoCaminhao,
                         atual.numMissoesCaminhao * sizeof *copiaC) != 0) movimentos[0]++;
-        else movimentos[1]++;
+        else {
+            int mudouQuantidade = 0;
+            for (int i = 0; i < atual.numMissoesDrone; i++)
+                if (copiaD[i].cliente == vizinho.missaoDrone[i].cliente &&
+                    copiaD[i].qtdDrones != vizinho.missaoDrone[i].qtdDrones)
+                    mudouQuantidade = 1;
+            movimentos[mudouQuantidade ? 4 : 1]++;
+        }
+        int quantidades[inst.n];
+        for (int i = 0; i < vizinho.numMissoesDrone; i++) {
+            MissaoDrone *m = &vizinho.missaoDrone[i];
+            assert(m->qtdDrones >= inst.clientes[m->cliente].minDrones);
+            assert(m->qtdDrones <= inst.numDrones);
+            assert(isfinite(inst.tempoDrone[m->cliente][m->qtdDrones]));
+            quantidades[i] = m->qtdDrones;
+        }
         assert(escalonarMissoesDrone(&inst, &vizinho));
+        for (int i = 0; i < vizinho.numMissoesDrone; i++)
+            assert(vizinho.missaoDrone[i].qtdDrones == quantidades[i]);
         /* Tambem verifica cobertura unica e ausencia de conflitos da frota. */
         assert(calcularMakespan(&inst, &vizinho));
         Solucao auxiliar = atual; atual = vizinho; vizinho = auxiliar;
     }
-    for (int i = 0; i < 4; i++) assert(movimentos[i] > 0);
+    for (int i = 0; i < 5; i++) assert(movimentos[i] > 0);
     assert(!gerarVizinho(&inst, &atual, &atual));
     assert(!gerarVizinho(NULL, &atual, &vizinho));
 

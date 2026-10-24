@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 
 ParametrosSA parametrosSAPadrao(void)
 {
@@ -33,8 +34,7 @@ int validarParametrosSA(const ParametrosSA *parametros)
         parametros->tempInicial > parametros->tempFinal;
 }
 
-int calculaTemperaturaInicial(const Instancia *inst, const Solucao *referencia,
-                             const ParametrosSA *parametros, double *temperatura)
+int calculaTemperaturaInicial(const Instancia *inst, const Solucao *referencia, const ParametrosSA *parametros, double *temperatura)
 {
     if (!validarParametrosSA(parametros) || inst == NULL || referencia == NULL ||
         temperatura == NULL || inst->n < 1 || inst->numDrones < 0)
@@ -48,12 +48,12 @@ int calculaTemperaturaInicial(const Instancia *inst, const Solucao *referencia,
 
     Solucao base = {0}, candidata = {0};
     /* A alocacao usa apenas n; a instancia original permanece constante. */
-    Instancia dimensoes = {.n = inst->n};
+    Instancia dimensoes = {.n = inst->n, .numDrones = inst->numDrones};
     alocarSolucao(&dimensoes, &base);
     alocarSolucao(&dimensoes, &candidata);
     int sucesso = 0;
     if (base.missaoCaminhao == NULL || base.missaoDrone == NULL ||
-        candidata.missaoCaminhao == NULL || candidata.missaoDrone == NULL)
+        candidata.missaoCaminhao == NULL || candidata.missaoDrone == NULL || base.prefixosDrone == NULL || candidata.prefixosDrone == NULL)
         goto finalizar;
     base.numMissoesCaminhao = nc;
     base.numMissoesDrone = nd;
@@ -71,9 +71,7 @@ int calculaTemperaturaInicial(const Instancia *inst, const Solucao *referencia,
         int aceitos = 0;
         for (int iteracao = 0; iteracao < parametros->saMax; iteracao++) {
             /* Cada teste parte da mesma base; nunca se aceita um movimento nela. */
-            if (!gerarVizinho(inst, &base, &candidata) ||
-                !escalonarMissoesDrone(inst, &candidata) ||
-                !calcularMakespan(inst, &candidata))
+            if (!gerarVizinhoAvaliado(inst, &base, &candidata))
                 goto finalizar;
             double delta = candidata.makespan - base.makespan;
             if (delta <= 0.0) {
@@ -102,7 +100,7 @@ finalizar:
 }
 
 /* Os dois destinos sao previamente alocados para a mesma instancia. */
-static void copiarSolucao(const Solucao *origem, Solucao *destino)
+static void copiarSolucao(const Instancia *inst, const Solucao *origem, Solucao *destino)
 {
     for (int i = 0; i < origem->numMissoesCaminhao; i++)
         destino->missaoCaminhao[i] = origem->missaoCaminhao[i];
@@ -111,6 +109,13 @@ static void copiarSolucao(const Solucao *origem, Solucao *destino)
     destino->numMissoesCaminhao = origem->numMissoesCaminhao;
     destino->numMissoesDrone = origem->numMissoesDrone;
     destino->makespan = origem->makespan;
+    destino->tempoCaminhao = origem->tempoCaminhao;
+    destino->tempoDrones = origem->tempoDrones;
+    destino->avaliacaoValida = origem->avaliacaoValida;
+    destino->cronogramaValido = origem->cronogramaValido;
+    if (origem->prefixosDrone && destino->prefixosDrone)
+        memcpy(destino->prefixosDrone, origem->prefixosDrone,
+               ((size_t)origem->numMissoesDrone + 1) * ((size_t)inst->numDrones + 1) * sizeof(double));
 }
 
 static int existeMovimento(const Instancia *inst, const Solucao *solucao)
@@ -127,41 +132,55 @@ static int existeMovimento(const Instancia *inst, const Solucao *solucao)
         isfinite(inst->tempoDrone[cliente][k]) && inst->tempoDrone[cliente][k] >= 0.0;
 }
 
-int simulatedAnnealing(const Instancia *inst, Solucao *solucao,
-                      const ParametrosSA *parametros)
-{
-    if (!validarParametrosSA(parametros) || inst == NULL || solucao == NULL ||
-        inst->n < 1 || inst->numDrones < 0 ||
-        solucao->missaoCaminhao == NULL || solucao->missaoDrone == NULL)
+int simulatedAnnealing(const Instancia *inst, Solucao *solucao, const ParametrosSA *parametros){
+
+    if (!validarParametrosSA(parametros) || inst == NULL || solucao == NULL || inst->n < 1 || inst->numDrones < 0 || solucao->missaoCaminhao == NULL || solucao->missaoDrone == NULL)
         return 0;
+
     int nc = solucao->numMissoesCaminhao, nd = solucao->numMissoesDrone;
+    
     if (nc < 0 || nc > inst->n - 1 || nd != inst->n - 1 - nc)
         return 0;
 
+    //Criamos três soluções: candidata, atual e melhor
     Solucao atual = {0}, candidata = {0}, melhor = {0};
-    Instancia dimensoes = {.n = inst->n};
+    
+    Instancia dimensoes = {.n = inst->n, .numDrones = inst->numDrones};
+    
     alocarSolucao(&dimensoes, &atual);
-    alocarSolucao(&dimensoes, &candidata);
-    alocarSolucao(&dimensoes, &melhor);
-    int sucesso = 0;
-    if (atual.missaoCaminhao == NULL || atual.missaoDrone == NULL ||
-        candidata.missaoCaminhao == NULL || candidata.missaoDrone == NULL ||
-        melhor.missaoCaminhao == NULL || melhor.missaoDrone == NULL)
-        goto finalizar;
-    copiarSolucao(solucao, &atual);
-    if (!escalonarMissoesDrone(inst, &atual) || !calcularMakespan(inst, &atual))
-        goto finalizar;
-    copiarSolucao(&atual, &melhor);
 
+    alocarSolucao(&dimensoes, &candidata);
+    
+    alocarSolucao(&dimensoes, &melhor);
+    
+    int sucesso = 0;
+    
+    if (atual.missaoCaminhao == NULL || atual.missaoDrone == NULL || candidata.missaoCaminhao == NULL || candidata.missaoDrone == NULL || melhor.missaoCaminhao == NULL || melhor.missaoDrone == NULL || atual.prefixosDrone == NULL || candidata.prefixosDrone == NULL || melhor.prefixosDrone == NULL){
+        goto finalizar;
+    }
+    copiarSolucao(inst, solucao, &atual);
+    
+    if (!escalonarMissoesDrone(inst, &atual) || !calcularMakespan(inst, &atual)){
+        goto finalizar;
+    }
+    copiarSolucao(inst, &atual, &melhor);
+    
     double temperatura = parametros->tempInicial;
+    
+    //enquanto a temperatura for maior do que a final e existir movimento
     while (temperatura > parametros->tempFinal && existeMovimento(inst, &atual)) {
+        
+        //Dentro do SAmax
         for (int iteracao = 0; iteracao < parametros->saMax; iteracao++) {
-            if (!gerarVizinho(inst, &atual, &candidata) ||
-                !escalonarMissoesDrone(inst, &candidata) ||
-                !calcularMakespan(inst, &candidata))
+            
+            //Aqui eu gero vizinho, escalono essa mudança e calculo o makespan
+            if (!gerarVizinhoAvaliado(inst, &atual, &candidata))
                 goto finalizar;
+
             double delta = candidata.makespan - atual.makespan;
+            
             int aceitar = delta <= 0.0;
+            
             if (!aceitar) {
                 double sorteio = (double)rand() / ((double)RAND_MAX + 1.0);
                 aceitar = sorteio < exp(-delta / temperatura);
@@ -173,15 +192,20 @@ int simulatedAnnealing(const Instancia *inst, Solucao *solucao,
                 atual = candidata;
                 candidata = auxiliar;
                 if (atual.makespan < melhor.makespan)
-                    copiarSolucao(&atual, &melhor);
+                    copiarSolucao(inst, &atual, &melhor);
             }
         }
+
         double proxima = temperatura * parametros->alpha;
+        
         if (proxima >= temperatura)
             goto finalizar;
+        
         temperatura = proxima;
     }
-    copiarSolucao(&melhor, solucao);
+    /* Uma verificacao completa ao final tambem elimina deriva numerica dos deltas. */
+    if (!calcularMakespan(inst, &melhor)) goto finalizar;
+    copiarSolucao(inst, &melhor, solucao);
     sucesso = 1;
 
 finalizar:
