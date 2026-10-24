@@ -12,55 +12,37 @@ typedef struct CasoBenchmark {
     double melhorLiteratura;
 } CasoBenchmark;
 
-/* Pequenas: ate 30 clientes; medias: 31 a 100 (convencao deste lote).
- * Melhor UB, nao LB, das Tabelas 1 e 2, Montemanni et al. (2024).
- * https://doi.org/10.1016/j.cor.2023.106514
- * Referencias fixas da publicacao; nao pressupoe otimalidade ou atualizacao online. */
+/* Todas as instancias disponiveis sem otimo comprovado nas Tabelas 1 e 2
+ * de Montemanni et al. (2024): os melhores limites LB e UB nao coincidem.
+ * A coluna melhorLiteratura guarda o UB (melhor solucao viavel conhecida).
+ * https://doi.org/10.1016/j.cor.2023.106514 */
 static const CasoBenchmark casos[] = {
-    {"15-r-e", "small", 92.0},
-    {"15-rc-c", "small", 44.0},
-    {"16-c-c", "small", 60.0},
-    {"16-r-e", "small", 112.0},
-    {"18-c-c", "small", 56.0},
-    {"18-r-e", "small", 96.0},
-    {"18-rc-c", "small", 57.0},
-    {"19-c-c", "small", 44.0},
-    {"20-c-c", "small", 43.0},
-    {"20-r-c", "small", 64.0},
-    {"20-r-e", "small", 80.0},
-    {"20-rc-c", "small", 96.0},
-    {"20-rc-e", "small", 100.0},
-    {"21-c-c", "small", 62.0},
-    {"21-r-e", "small", 85.0},
-    {"23-c-e", "small", 80.0},
-    {"23-r-c", "small", 88.0},
-    {"24-c-e", "small", 84.0},
-    {"24-r-e", "small", 112.0},
-    {"24-rc-c", "small", 70.0},
-    {"25-c-c", "small", 56.0},
-    {"25-r-e", "small", 104.0},
-    {"25-rc-e", "small", 92.0},
-    {"26-r-c", "small", 103.0},
-    {"27-c-c", "small", 84.0},
-    {"27-c-e", "small", 68.0},
-    {"27-rc-c", "small", 100.0},
-    {"27-rc-e", "small", 84.0},
-    {"29-rc-e", "small", 116.0},
-    {"30-c-c", "small", 96.0},
-    {"50-r-e", "large", 116.0},
-    {"53-r-e", "large", 132.0},
-    {"66-rc-e", "large", 124.0},
-    {"67-c-c", "large", 76.0},
-    {"68-rc-c", "large", 76.0},
-    {"76-c-c", "large", 52.0},
-    {"82-c-e", "large", 64.0},
-    {"82-rc-c", "large", 104.0},
-    {"88-c-e", "large", 108.0},
-    {"91-r-c", "large", 124.0},
-    {"99-rc-c", "large", 100.0},
+    {"20-c-c", "small", 43.0}, /* LB=40 */
+    {"21-c-c", "small", 62.0}, /* LB=60 */
+    {"26-r-c", "small", 103.0}, /* LB=101 */
+    {"67-c-c", "large", 76.0}, /* LB=73 */
+    {"91-r-c", "large", 124.0}, /* LB=120 */
+    {"99-rc-c", "large", 100.0}, /* LB=98 */
+    {"101-r-c", "large", 120.0}, /* LB=114 */
+    {"103-rc-c", "large", 124.0}, /* LB=120 */
+    {"105-rc-e", "large", 120.0}, /* LB=109 */
+    {"108-rc-e", "large", 136.0}, /* LB=134 */
+    {"114-rc-c", "large", 96.0}, /* LB=94 */
+    {"121-rc-e", "large", 124.0}, /* LB=121 */
+    {"126-r-c", "large", 160.0}, /* LB=151 */
+    {"126-rc-e", "large", 144.0}, /* LB=136 */
+    {"144-rc-c", "large", 128.0}, /* LB=122; rotulo 144-rc-r na Tabela 2 */
+    {"154-c-c", "large", 72.0}, /* LB=68 */
+    {"165-r-c", "large", 164.0}, /* LB=140 */
+    {"167-r-e", "large", 188.0}, /* LB=160 */
+    {"173-r-c", "large", 164.0}, /* LB=141 */
+    {"173-rc-c", "large", 133.0}, /* LB=115; rotulo 173-rc-r na Tabela 2 */
+    {"181-r-e", "large", 224.0}, /* LB=199 */
+    {"187-rc-e", "large", 196.0}, /* LB=167 */
+    {"200-r-e", "large", 212.0}, /* LB=162 */
 };
 
-static int testarInstancia(const CasoBenchmark *caso)
+static int testarInstancia(const CasoBenchmark *caso, double *resultado)
 
 {
     const char *nome = caso->nome;
@@ -113,6 +95,7 @@ static int testarInstancia(const CasoBenchmark *caso)
     printf("%8d %6d %12.2f %12.2f %18.2f %+9.2f %10.2f %10.2f %10.3f OK\n",
            inst.n - 1, inst.numDrones, makespanInicial, solucao.makespan,
            caso->melhorLiteratura, gap, melhoria, temperaturaInicial, segundos);
+    *resultado = solucao.makespan;
     sucesso = 1;
 
 finalizar:
@@ -127,21 +110,66 @@ finalizar:
 
 int main(void)
 {
-    const unsigned int semente = 123;
-    const size_t total = sizeof casos / sizeof casos[0];
-    size_t concluidas = 0;
-    srand(semente);
-    printf("PDSTSP-C: %zu instancias; uma execucao de SA por instancia; semente %u.\n", total, semente);
-    printf("Pequenas: ate 30 clientes. Medias: 31 a 100 clientes.\n");
-    printf("Melhor literatura: melhor UB das Tabelas 1 e 2, Montemanni et al. (2024).\n");
-    printf("Fonte: https://doi.org/10.1016/j.cor.2023.106514\n");
-    printf("Gap = 100 * (SA - literatura) / literatura. CPU inclui calibracao e SA.\n\n");
-    printf("%-10s %8s %6s %12s %12s %18s %9s %10s %10s %10s %s\n",
-           "Instancia", "Clientes", "Drones", "Inicial(min)", "SA(min)",
-           "Melhor lit.(min)", "Gap(%)", "Ganho(%)", "T0", "CPU(s)", "Status");
-    for (size_t i = 0; i < total; i++)
-        concluidas += testarInstancia(&casos[i]);
-    printf("\nConcluidas: %zu/%zu; falhas: %zu.\n", concluidas, total, total - concluidas);
-    printf("Literatura: melhores solucoes conhecidas na referencia, nem todas otimas provadas.\n");
-    return concluidas == total ? EXIT_SUCCESS : EXIT_FAILURE;
+    const unsigned int semente = (unsigned int)time(NULL);
+    const size_t total = 100;
+    const size_t totalCasos = sizeof casos / sizeof casos[0];
+    size_t concluidasTotal = 0;
+    FILE *resumo = fopen("resultados/resumo_sem_otimo_100_execucoes.csv", "w");
+    if (resumo == NULL) {
+        perror("Nao foi possivel criar o resumo em resultados");
+        return EXIT_FAILURE;
+    }
+    fprintf(resumo, "instancia,concluidas,melhor,media,melhor_literatura,gap_melhor_percentual,execucao_melhor,semente_melhor,abaixo_referencia,iguais_referencia\n");
+    printf("PDSTSP-C: %zu instancias; %zu execucoes por instancia; semente base %u.\n", totalCasos, total, semente);
+    for (size_t c = 0; c < totalCasos; c++) {
+        const CasoBenchmark *caso = &casos[c];
+        size_t concluidas = 0;
+        double melhor = 0.0, soma = 0.0;
+        size_t execucaoMelhor = 0, melhoresLiteratura = 0, iguaisLiteratura = 0;
+        printf("\nInstancia %zu/%zu: %s; %zu execucoes independentes de SA.\n", c + 1, totalCasos, caso->nome, total);
+        printf("Sem otimo comprovado na referencia de 2024. Cada execucao reconstroi a solucao inicial.\n");
+        printf("Melhor literatura: melhor UB das Tabelas 1 e 2, Montemanni et al. (2024).\n");
+        printf("Fonte: https://doi.org/10.1016/j.cor.2023.106514\n");
+        printf("Gap = 100 * (SA - literatura) / literatura. CPU inclui calibracao e SA.\n\n");
+        printf("%-10s %8s %6s %12s %12s %18s %9s %10s %10s %10s %s\n",
+               "Instancia", "Clientes", "Drones", "Inicial(min)", "SA(min)",
+               "Melhor lit.(min)", "Gap(%)", "Ganho(%)", "T0", "CPU(s)", "Status");
+        for (size_t i = 0; i < total; i++) {
+            unsigned int sementeExecucao = semente + (unsigned int)(c * total + i);
+            double resultado;
+            srand(sementeExecucao);
+            printf("Execucao %zu/%zu; semente %u\n", i + 1, total, sementeExecucao);
+            if (testarInstancia(caso, &resultado)) {
+                if (concluidas == 0 || resultado < melhor) {
+                    melhor = resultado;
+                    execucaoMelhor = i + 1;
+                }
+                soma += resultado;
+                concluidas++;
+                if (resultado < caso->melhorLiteratura - 1e-9) melhoresLiteratura++;
+                else if (resultado <= caso->melhorLiteratura + 1e-9) iguaisLiteratura++;
+            }
+        }
+        printf("\nConcluidas: %zu/%zu; falhas: %zu.\n", concluidas, total, total - concluidas);
+        if (concluidas > 0) {
+            printf("Melhor: %.2f min (execucao %zu); media: %.2f min; literatura: %.2f min; gap do melhor: %+.2f%%.\n",
+                   melhor, execucaoMelhor, soma / concluidas, caso->melhorLiteratura,
+                   100.0 * (melhor - caso->melhorLiteratura) / caso->melhorLiteratura);
+            printf("Resultados abaixo da referencia: %zu; iguais: %zu.\n", melhoresLiteratura, iguaisLiteratura);
+            fprintf(resumo, "%s,%zu,%.9f,%.9f,%.9f,%.9f,%zu,%u,%zu,%zu\n",
+                    caso->nome, concluidas, melhor, soma / concluidas, caso->melhorLiteratura,
+                    100.0 * (melhor - caso->melhorLiteratura) / caso->melhorLiteratura,
+                    execucaoMelhor, semente + (unsigned int)(c * total + execucaoMelhor - 1),
+                    melhoresLiteratura, iguaisLiteratura);
+        } else {
+            fprintf(resumo, "%s,0,,,,,,,,\n", caso->nome);
+        }
+        fflush(resumo);
+        concluidasTotal += concluidas;
+    }
+    int erroResumo = ferror(resumo);
+    if (fclose(resumo) != 0) erroResumo = 1;
+    printf("\nTOTAL: %zu/%zu execucoes concluidas.\n", concluidasTotal, totalCasos * total);
+    printf("Literatura: melhores solucoes conhecidas, sem otimo comprovado nestas instancias.\n");
+    return concluidasTotal == totalCasos * total && !erroResumo ? EXIT_SUCCESS : EXIT_FAILURE;
 }

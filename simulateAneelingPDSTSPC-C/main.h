@@ -78,10 +78,11 @@ typedef struct Solucao {
     double makespan;
     double tempoCaminhao;
     double tempoDrones;
-    /* Estado da frota apos cada prefixo: numDrones disponibilidades + maximo. */
+    /* Maior termino apos cada prefixo; ocupacao e dada pelas proprias missoes. */
     double *prefixosDrone;
     bool cronogramaValido;
     bool avaliacaoValida;
+    bool branchBoundAplicado; /* Refinamento ja tentado para estas missoes. */
 
 }Solucao;
 

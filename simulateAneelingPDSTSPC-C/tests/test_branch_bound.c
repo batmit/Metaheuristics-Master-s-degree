@@ -4,8 +4,8 @@
 #include <string.h>
 #include "cv.h"
 
-/* Oraculo independente: enumera inicios inteiros de todas as tarefas,
- * sem usar ordens de prioridade nem a insercao do Branch and Bound. */
+/* Oraculo independente: enumera configuracoes e busca o primeiro inicio
+ * em uma grade inteira, sempre seguindo a ordem recebida. */
 static int ocupacao[64], duracoes[5], quantidades[5], otimo;
 static void enumerar(int i, int n, int frota, int maximo)
 {
@@ -19,6 +19,7 @@ static void enumerar(int i, int n, int frota, int maximo)
         int fim = t + duracoes[i];
         enumerar(i + 1, n, frota, fim > maximo ? fim : maximo);
         for (int h = t; h < t + duracoes[i]; h++) ocupacao[h] -= quantidades[i];
+        break; /* A regra fixa nao permite escolher um inicio posterior. */
     }
 }
 
@@ -57,8 +58,9 @@ int main(void)
     Solucao s = {.missaoDrone = missoes, .numMissoesDrone = 5};
     assert(escalonarMissoesDrone(&inst, &s));
     assert(calcularMakespan(&inst, &s) && s.makespan == 7);
-    assert(escalonarMissoesDroneBB(&inst, missoes, 5) == 6);
-    assert(calcularMakespan(&inst, &s) && s.makespan == 6);
+    assert(escalonarMissoesDroneBB(&inst, missoes, 5) == 7);
+    for (int i = 0; i < 5; i++) assert(missoes[i].cliente == i + 1);
+    assert(calcularMakespan(&inst, &s) && s.makespan == 7);
 
     srand(456);
     inst.numDrones = 3;
@@ -76,6 +78,7 @@ int main(void)
         otimo = soma;
         enumerar(0, 4, 3, 0);
         assert(escalonarMissoesDroneBB(&inst, missoes, 4) == otimo);
+        for (int i = 0; i < 4; i++) assert(missoes[i].cliente == i + 1);
         /* O quinto cliente permanece no caminhao, com tempos zero. */
         double tc[6][6] = {{0}}; double *caminhao[6];
         for (int i = 0; i < 6; i++) caminhao[i] = tc[i];
@@ -140,6 +143,7 @@ int main(void)
                     if (isfinite(tempos[i][k])) tempos[i][k] /= 4.0;
         }
         assert(escalonarMissoesDroneBB(&inst, missoes, 3) == esperado);
+        for (int i = 0; i < 3; i++) assert(missoes[i].cliente == i + 1);
         for (int i = 0; i < 3; i++) {
             MissaoDrone *m = &missoes[i];
             assert(m->qtdDrones >= clientes[m->cliente].minDrones);

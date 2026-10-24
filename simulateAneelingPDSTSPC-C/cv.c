@@ -23,8 +23,9 @@ void alocarSolucao(Instancia *inst, Solucao *solucao){
     solucao->numMissoesDrone = 0;
     solucao->makespan = INFINITY;
     solucao->tempoCaminhao = solucao->tempoDrones = INFINITY;
-    solucao->prefixosDrone = calloc((size_t)inst->n * ((size_t)inst->numDrones + 1), sizeof(double));
+    solucao->prefixosDrone = calloc((size_t)inst->n, sizeof(double));
     solucao->cronogramaValido = solucao->avaliacaoValida = false;
+    solucao->branchBoundAplicado = false;
 
 }
 
@@ -118,6 +119,30 @@ void alocarTempoDrone(Instancia *inst)
     }
 }
 
+static double tempoTrecho(const Instancia *inst, int a, int b);
+static double arestaRota(const Instancia *inst, const Solucao *s, int p);
+
+/* Delta da reversao inclui arcos internos, inclusive em matrizes assimetricas. */
+static double deltaDoisOpt(const Instancia *inst, const Solucao *s, int i, int j)
+{
+    int a = i == 0 ? 0 : s->missaoCaminhao[i - 1].n;
+    int b = s->missaoCaminhao[i].n;
+    int c = s->missaoCaminhao[j].n;
+    int d = j + 1 == s->numMissoesCaminhao ? 0 : s->missaoCaminhao[j + 1].n;
+    double delta = tempoTrecho(inst,a,c) + tempoTrecho(inst,b,d)
+                 - tempoTrecho(inst,a,b) - tempoTrecho(inst,c,d);
+    for (int p = i; p < j; p++) {
+        int u=s->missaoCaminhao[p].n, v=s->missaoCaminhao[p+1].n;
+        delta += tempoTrecho(inst,v,u) - tempoTrecho(inst,u,v);
+    }
+    return delta;
+}
+
+static void inverterTrecho(Missao *rota, int i, int j)
+{
+    while (i < j) { Missao aux=rota[i]; rota[i++]=rota[j]; rota[j--]=aux; }
+}
+
 //Todos os clientes no caminhão
 int construirSolucaoInicial(const Instancia *inst, Solucao *solucao)
 {
@@ -125,6 +150,8 @@ int construirSolucaoInicial(const Instancia *inst, Solucao *solucao)
         return 0;
 
     solucao->makespan = INFINITY;
+    solucao->branchBoundAplicado = false;
+    solucao->cronogramaValido = false;
     solucao->numMissoesCaminhao = 0;
     solucao->numMissoesDrone = 0;
 
@@ -137,6 +164,40 @@ int construirSolucaoInicial(const Instancia *inst, Solucao *solucao)
         solucao->missaoCaminhao[cliente - 1].n = cliente;
 
     solucao->numMissoesCaminhao = inst->n - 1;
+    if (!calcularMakespan(inst, solucao)) return 0;
+    if (inst->n <= 2) return 1;
+    Missao *original = malloc((size_t)(inst->n - 1) * sizeof *original);
+    bool *visitado = calloc((size_t)inst->n, sizeof *visitado);
+    if (!original || !visitado) { free(original); free(visitado); return 0; }
+    memcpy(original, solucao->missaoCaminhao, (size_t)(inst->n - 1) * sizeof *original);
+    double referencia = solucao->makespan;
+    int anterior = 0;
+    for (int p = 0; p < inst->n - 1; p++) {
+        int proximo = -1;
+        for (int c = 1; c < inst->n; c++)
+            if (!visitado[c] && isfinite(tempoTrecho(inst,anterior,c)) &&
+                (proximo < 0 || tempoTrecho(inst,anterior,c) < tempoTrecho(inst,anterior,proximo)))
+                proximo = c;
+        if (proximo < 0) break;
+        solucao->missaoCaminhao[p].n = proximo;
+        visitado[proximo] = true;
+        anterior = proximo;
+    }
+    if (!calcularMakespan(inst, solucao) || solucao->makespan > referencia)
+        memcpy(solucao->missaoCaminhao, original, (size_t)(inst->n - 1) * sizeof *original);
+    free(original); free(visitado);
+    bool melhorou;
+    do {
+        melhorou = false;
+        for (int i = 0; i < inst->n - 2 && !melhorou; i++)
+            for (int j = i + 1; j < inst->n - 1; j++) {
+                double delta = deltaDoisOpt(inst, solucao, i, j);
+                if (isfinite(delta) && delta < -1e-9) {
+                    inverterTrecho(solucao->missaoCaminhao, i, j);
+                    melhorou = true; break;
+                }
+            }
+    } while (melhorou);
     return calcularMakespan(inst, solucao);
 }
 
@@ -191,7 +252,8 @@ static double arestaRota(const Instancia *inst, const Solucao *s, int p){
 }
 
 static int gerarVizinhoInterno(const Instancia *inst, const Solucao *atual,
-                              Solucao *vizinho, AlteracaoVizinho *alteracao){
+                              Solucao *vizinho, AlteracaoVizinho *alteracao,
+                              const double *pesos, TipoMovimento *tipo){
 
     if (inst == NULL || atual == NULL || vizinho == NULL || atual == vizinho ||
         inst->n < 1 || inst->numDrones < 0)
@@ -202,6 +264,9 @@ static int gerarVizinhoInterno(const Instancia *inst, const Solucao *atual,
     //nd = numero de missoes drone
 
     int nc = atual->numMissoesCaminhao, nd = atual->numMissoesDrone;
+    if (pesos != NULL)
+        for (int i = 0; i < NUM_MOVIMENTOS; i++)
+            if (!isfinite(pesos[i]) || pesos[i] <= 0.0) return 0;
     
     //verificação de falha
     if (nc < 0 || nc > inst->n - 1 || nd != inst->n - 1 - nc ||
@@ -240,14 +305,14 @@ static int gerarVizinhoInterno(const Instancia *inst, const Solucao *atual,
     }
     free(visitado);
 
-    enum { TROCAR_CAMINHAO, TROCAR_DRONES, PARA_DRONES, PARA_CAMINHAO,
-           ALTERAR_QUANTIDADE_DRONES };
-    int movimentos[5], quantidade = 0;
+    int movimentos[NUM_MOVIMENTOS], quantidade = 0;
 
     //Defino a quantidade de movimentos que estão disponíveis, e efetivamente quais são eles
     //Uma maneira muito elegante, crio um vetor que recebe progressivamente quais tipos de movimentos
     //são possíveis de serem realizados e, paralelamente, um contar para quantos são
     if (nc >= 2) movimentos[quantidade++] = TROCAR_CAMINHAO;
+    if (nc >= 3) movimentos[quantidade++] = REINSERIR_CAMINHAO;
+    if (nc >= 3) movimentos[quantidade++] = DOIS_OPT_CAMINHAO;
     if (nd >= 2) movimentos[quantidade++] = TROCAR_DRONES;
     if (elegiveis > 0) movimentos[quantidade++] = PARA_DRONES;
     if (nd > 0) movimentos[quantidade++] = PARA_CAMINHAO;
@@ -265,7 +330,22 @@ static int gerarVizinhoInterno(const Instancia *inst, const Solucao *atual,
     vizinho->numMissoesCaminhao = nc;
     vizinho->numMissoesDrone = nd;
     if (alteracao) *alteracao = (AlteracaoVizinho){nd, 0.0};
-    int movimento = movimentos[rand() % quantidade];
+    int movimento;
+    if (pesos == NULL) {
+        movimento = movimentos[rand() % quantidade];
+    } else {
+        /* Normaliza pelo maior peso para evitar overflow na soma. */
+        double maior = 0.0, soma = 0.0;
+        for (int i = 0; i < quantidade; i++) maior = fmax(maior, pesos[movimentos[i]]);
+        for (int i = 0; i < quantidade; i++) soma += pesos[movimentos[i]] / maior;
+        double sorteio = ((double)rand() / ((double)RAND_MAX + 1.0)) * soma;
+        movimento = movimentos[quantidade - 1];
+        for (int i = 0; i < quantidade; i++) {
+            double parcela = pesos[movimentos[i]] / maior;
+            if (sorteio < parcela) { movimento = movimentos[i]; break; }
+            sorteio -= parcela;
+        }
+    }
 
     if (movimento == TROCAR_CAMINHAO || movimento == TROCAR_DRONES) {
 
@@ -299,6 +379,28 @@ static int gerarVizinhoInterno(const Instancia *inst, const Solucao *atual,
             if (alteracao) alteracao->primeiraDrone = i < j ? i : j;
         }
 
+    } else if (movimento == REINSERIR_CAMINHAO) {
+        int origem=rand()%nc, destino=rand()%(nc-1);
+        if (destino >= origem) destino++;
+        int a=origem==0?0:atual->missaoCaminhao[origem-1].n;
+        int x=atual->missaoCaminhao[origem].n;
+        int b=origem==nc-1?0:atual->missaoCaminhao[origem+1].n;
+        Missao movida=vizinho->missaoCaminhao[origem];
+        if (origem < destino)
+            for(int p=origem;p<destino;p++) vizinho->missaoCaminhao[p]=vizinho->missaoCaminhao[p+1];
+        else
+            for(int p=origem;p>destino;p--) vizinho->missaoCaminhao[p]=vizinho->missaoCaminhao[p-1];
+        vizinho->missaoCaminhao[destino]=movida;
+        int u=destino==0?0:vizinho->missaoCaminhao[destino-1].n;
+        int v=destino==nc-1?0:vizinho->missaoCaminhao[destino+1].n;
+        if(alteracao) alteracao->deltaCaminhao = tempoTrecho(inst,a,b)-tempoTrecho(inst,a,x)
+            -tempoTrecho(inst,x,b)+tempoTrecho(inst,u,x)+tempoTrecho(inst,x,v)-tempoTrecho(inst,u,v);
+    } else if (movimento == DOIS_OPT_CAMINHAO) {
+        int i=rand()%nc, j=rand()%(nc-1);
+        if(j>=i) j++;
+        if(i>j) {int aux=i;i=j;j=aux;}
+        if(alteracao) alteracao->deltaCaminhao=deltaDoisOpt(inst,atual,i,j);
+        inverterTrecho(vizinho->missaoCaminhao,i,j);
     } else if (movimento == PARA_DRONES) {
         //sorteio um dos elegíveis
         int escolhido = rand() % elegiveis, origem = 0;
@@ -359,6 +461,9 @@ static int gerarVizinhoInterno(const Instancia *inst, const Solucao *atual,
     vizinho->numMissoesDrone = nd;
     vizinho->makespan = INFINITY;
     vizinho->avaliacaoValida = vizinho->cronogramaValido = false;
+    vizinho->branchBoundAplicado = atual->branchBoundAplicado &&
+        (movimento == TROCAR_CAMINHAO || movimento == REINSERIR_CAMINHAO ||
+         movimento == DOIS_OPT_CAMINHAO);
 
     //Depois vamos apenas salvar os dados, até porque foi alterado o vetor dos drones
     //O escalonamento será feito posteriormente
@@ -371,11 +476,56 @@ static int gerarVizinhoInterno(const Instancia *inst, const Solucao *atual,
             m->tempoFim = INFINITY;
         }
     }
+    if (tipo != NULL) *tipo = (TipoMovimento)movimento;
     return 1;
 }
 
 int gerarVizinho(const Instancia *inst, const Solucao *atual, Solucao *vizinho){
-    return gerarVizinhoInterno(inst, atual, vizinho, NULL);
+    return gerarVizinhoInterno(inst, atual, vizinho, NULL, NULL, NULL);
+}
+
+/* Perfil de ocupacao: eventos ordenados; retornos e partidas no mesmo
+ * instante sao agregados, respeitando intervalos [inicio,fim). */
+typedef struct EventoDrone { double tempo; int delta; } EventoDrone;
+typedef struct PerfilDrone { EventoDrone *eventos; int quantidade; } PerfilDrone;
+
+static void inserirEventoDrone(PerfilDrone *p, double tempo, int delta)
+{
+    int i=0;
+    while(i<p->quantidade && p->eventos[i].tempo<tempo) i++;
+    if(i<p->quantidade && p->eventos[i].tempo==tempo) {
+        p->eventos[i].delta+=delta;
+        if(p->eventos[i].delta==0) {
+            memmove(p->eventos+i,p->eventos+i+1,(size_t)(p->quantidade-i-1)*sizeof(EventoDrone));
+            p->quantidade--;
+        }
+    } else {
+        memmove(p->eventos+i+1,p->eventos+i,(size_t)(p->quantidade-i)*sizeof(EventoDrone));
+        p->eventos[i]=(EventoDrone){tempo,delta}; p->quantidade++;
+    }
+}
+
+static void ocuparPerfilDrone(PerfilDrone *p, double inicio, double fim, int drones)
+{
+    if(inicio==fim) return;
+    inserirEventoDrone(p,inicio,drones);
+    inserirEventoDrone(p,fim,-drones);
+}
+
+/* Uma varredura do perfil encontra a primeira janela continua com capacidade. */
+static double primeiroInicioPerfil(const PerfilDrone *p, int frota, double duracao, int drones)
+{
+    if(duracao==0.0) return 0.0;
+    int uso=0, capacidade=frota-drones;
+    double candidato=0.0;
+    for(int i=0;i<p->quantidade;i++) {
+        double t=p->eventos[i].tempo;
+        if(uso>capacidade) candidato=t;
+        else if(t-candidato>=duracao) return candidato;
+        uso+=p->eventos[i].delta;
+        if(uso>capacidade) candidato=t;
+    }
+    return candidato;
 }
 
 static int escalonarDesde(const Instancia *inst, Solucao *solucao,
@@ -385,6 +535,7 @@ static int escalonarDesde(const Instancia *inst, Solucao *solucao,
         return 0;
     solucao->makespan = INFINITY;
     solucao->avaliacaoValida = solucao->cronogramaValido = false;
+    solucao->branchBoundAplicado = false;
     
     if (inst == NULL || inst->n < 1 || inst->numDrones < 0 ||
         solucao->numMissoesDrone < 0 || solucao->numMissoesDrone > inst->n - 1)
@@ -396,37 +547,24 @@ static int escalonarDesde(const Instancia *inst, Solucao *solucao,
         solucao->tempoDrones = 0.0;
         solucao->cronogramaValido = true;
         if (solucao->prefixosDrone)
-            memset(solucao->prefixosDrone, 0, ((size_t)inst->numDrones + 1) * sizeof(double));
+            solucao->prefixosDrone[0] = 0.0;
         return 1;
     }
     if (inst->numDrones == 0 || inst->clientes == NULL || inst->tempoDrone == NULL || solucao->missaoDrone == NULL)
         return 0;
 
     
-    double *disponibilidade = calloc(inst->numDrones, sizeof *disponibilidade);
-    
-    bool *selecionado = calloc(inst->numDrones, sizeof *selecionado);
-    
     bool *visitado = calloc(inst->n, sizeof *visitado);
-    
     MissaoDrone *cronograma = calloc(quantidade, sizeof *cronograma);
-    
+    EventoDrone *eventos = malloc((size_t)quantidade * 2 * sizeof *eventos);
+    PerfilDrone perfil = {eventos,0};
     int sucesso = 0;
-    if (disponibilidade == NULL || selecionado == NULL || visitado == NULL || cronograma == NULL)
-        goto finalizar;
-
-    size_t passo = (size_t)inst->numDrones + 1;
-    double maximo = 0.0;
-    if (primeira > 0) {
-        memcpy(disponibilidade, base->prefixosDrone + (size_t)primeira * passo,
-               inst->numDrones * sizeof(double));
-        maximo = base->prefixosDrone[(size_t)primeira * passo + inst->numDrones];
-        memcpy(solucao->prefixosDrone, base->prefixosDrone,
-               ((size_t)primeira + 1) * passo * sizeof(double));
-        for (int i = 0; i < primeira; i++)
-            cronograma[i] = solucao->missaoDrone[i];
-    } else if (solucao->prefixosDrone) {
-        memset(solucao->prefixosDrone, 0, passo * sizeof(double));
+    if (visitado == NULL || cronograma == NULL || eventos == NULL) goto finalizar;
+    double maximo = primeira > 0 ? base->prefixosDrone[primeira] : 0.0;
+    for (int i = 0; i < primeira; i++) {
+        cronograma[i] = solucao->missaoDrone[i];
+        visitado[cronograma[i].cliente] = true;
+        ocuparPerfilDrone(&perfil,cronograma[i].tempoInicio,cronograma[i].tempoFim,cronograma[i].qtdDrones);
     }
     for (int i = primeira; i < quantidade; i++) {
         int cliente = solucao->missaoDrone[i].cliente;
@@ -443,36 +581,20 @@ static int escalonarDesde(const Instancia *inst, Solucao *solucao,
             goto finalizar;
         visitado[cliente] = true;
 
-        for (int d = 0; d < inst->numDrones; d++)
-            selecionado[d] = false;
-        double inicio = 0.0;
-        for (int unidade = 0; unidade < k; unidade++) {
-            int melhor = -1;
-            for (int d = 0; d < inst->numDrones; d++) {
-                if (!selecionado[d] && (melhor == -1 || disponibilidade[d] < disponibilidade[melhor]))
-                    melhor = d;
-            }
-            /* Empates sao resolvidos pelo menor indice do drone. */
-            selecionado[melhor] = true;
-            inicio = fmax(inicio, disponibilidade[melhor]);
-        }
+        double inicio = primeiroInicioPerfil(&perfil, inst->numDrones, duracao, k);
         double fim = inicio + duracao;
-        if (!isfinite(fim))
-            goto finalizar;
-        for (int d = 0; d < inst->numDrones; d++) {
-            if (selecionado[d])
-                disponibilidade[d] = fim;
-        }
+        if (!isfinite(fim)) goto finalizar;
         cronograma[i] = (MissaoDrone){cliente, k, inicio, fim};
+        ocuparPerfilDrone(&perfil,inicio,fim,k);
         maximo = fmax(maximo, fim);
-        if (solucao->prefixosDrone) {
-            double *estado = solucao->prefixosDrone + ((size_t)i + 1) * passo;
-            memcpy(estado, disponibilidade, inst->numDrones * sizeof(double));
-            estado[inst->numDrones] = maximo;
-        }
     }
 
     /* Publica somente depois de validar e escalonar todas as missoes. */
+    if (solucao->prefixosDrone) {
+        solucao->prefixosDrone[0] = 0.0;
+        for (int i = 0; i < quantidade; i++)
+            solucao->prefixosDrone[i + 1] = fmax(solucao->prefixosDrone[i], cronograma[i].tempoFim);
+    }
     for (int i = 0; i < quantidade; i++)
         solucao->missaoDrone[i] = cronograma[i];
     solucao->tempoDrones = maximo;
@@ -480,10 +602,9 @@ static int escalonarDesde(const Instancia *inst, Solucao *solucao,
     sucesso = 1;
 
 finalizar:
-    free(disponibilidade);
-    free(selecionado);
     free(visitado);
     free(cronograma);
+    free(eventos);
     return sucesso;
 }
 
@@ -492,239 +613,229 @@ int escalonarMissoesDrone(const Instancia *inst, Solucao *solucao){
     return escalonarDesde(inst, solucao, NULL, 0);
 }
 
-/* Branch and Bound: escolhe a quantidade de drones e a ordem das missoes.
- * Cada ramo escolhe a proxima missao de uma ordem de prioridades e a insere
- * no primeiro intervalo viavel. Enumerar essas ordens cobre os cronogramas
- * ativos; existe um otimo ativo para minimizar o makespan neste modelo. */
+/* Branch and Bound apenas sobre as quantidades de drones.
+ * O nivel da arvore corresponde ao mesmo indice no vetor de entrada.
+ * Cada configuracao usa insercao no primeiro intervalo viavel do cronograma;
+ * a ordem de processamento e fixa e nao representa uma precedencia temporal. */
+typedef struct OpcaoDroneBB {
+    int k;
+    double inicio, fim;
+    long double consumo;
+} OpcaoDroneBB;
+
 typedef struct BuscaDroneBB {
-    int quantidade;
-    int frota;
-    MissaoDrone *tarefas;
+    int quantidade, frota;
     const Instancia *inst;
-    long double *cargaMinima;
-    bool temposInteiros;
-    bool *usadas;
-    MissaoDrone *parcial;
-    MissaoDrone *melhor;
-    double limiteSuperior;
+    MissaoDrone *tarefas, *parcial, *melhor;
+    long double *cargaSufixo;
+    PerfilDrone *perfis;
+    EventoDrone *eventos;
+    OpcaoDroneBB *opcoes;
+    bool temposInteiros, interrompida, metaAtingida;
+    double limiteSuperior, meta;
+    unsigned long long nos, maxNos;
 } BuscaDroneBB;
 
-static bool intervaloViavelBB(const BuscaDroneBB *b, int nivel,
-                              double inicio, double fim, int drones)
-{
-    if (!isfinite(fim)) return false;
-    if (inicio == fim) return true;
-    /* O consumo so aumenta no inicio da candidata ou de uma tarefa existente. */
-    for (int evento = -1; evento < nivel; evento++) {
-        double instante = evento < 0 ? inicio : b->parcial[evento].tempoInicio;
-        if (instante < inicio || instante >= fim) continue;
-        int livres = b->frota - drones;
-        for (int j = 0; j < nivel; j++) {
-            const MissaoDrone *m = &b->parcial[j];
-            if (m->tempoInicio <= instante && instante < m->tempoFim) {
-                if (m->qtdDrones > livres) return false;
-                livres -= m->qtdDrones;
-            }
-        }
-    }
-    return true;
-}
-
-static double primeiroInicioBB(const BuscaDroneBB *b, int nivel, double duracao, int drones)
-{
-    if (intervaloViavelBB(b, nivel, 0.0, duracao, drones)) return 0.0;
-    double melhor = INFINITY;
-    /* Se zero nao serve, o primeiro inicio viavel coincide com algum retorno. */
-    for (int i = 0; i < nivel; i++) {
-        double inicio = b->parcial[i].tempoFim;
-        if (inicio < melhor && intervaloViavelBB(b, nivel, inicio,
-                                                 inicio + duracao, drones))
-            melhor = inicio;
-    }
-    return melhor;
-}
-
-/* Cada configuracao e filtrada individualmente, inclusive lacunas na matriz. */
 static double duracaoConfiguracaoBB(const BuscaDroneBB *b, int tarefa, int k)
 {
-    int cliente = b->tarefas[tarefa].cliente;
-    if (k < b->inst->clientes[cliente].minDrones) return INFINITY;
-    double tempo = b->inst->tempoDrone[cliente][k];
-    return isfinite(tempo) && tempo >= 0.0 ? tempo : INFINITY;
+    int cliente=b->tarefas[tarefa].cliente;
+    if(k<b->inst->clientes[cliente].minDrones) return INFINITY;
+    double t=b->inst->tempoDrone[cliente][k];
+    return isfinite(t) && t>=0.0 ? t : INFINITY;
 }
 
-static bool tarefasEquivalentesBB(const BuscaDroneBB *b, int i, int j)
+/* Desigualdade (16), com soma minima do sufixo pre-calculada: O(1) por no. */
+static long double limiteCargaDroneBB(const BuscaDroneBB *b, int nivel, long double fixada)
 {
-    /* Simetria exige o perfil inteiro, nao somente uma duracao escolhida. */
-    for (int k = 1; k <= b->frota; k++)
-        if (duracaoConfiguracaoBB(b, i, k) != duracaoConfiguracaoBB(b, j, k))
-            return false;
-    return true;
-}
-
-/* Desigualdade (16), Secao 2.3, Montemanni et al. (2024):
- * m * Cmax >= soma(k * tau). Para escolhas abertas, usa min_k(k * tau).
- * O consumo fixado substitui o minimo de cada tarefa ja escolhida.
- * Nao se soma makespan parcial: isso contaria trabalho duas vezes.
- * Arredondamento dirigido para baixo mantem o limite conservador. */
-static long double limiteCargaDroneBB(const BuscaDroneBB *b, long double cargaFixada)
-{
-    long double carga = cargaFixada;
-    for (int i = 0; i < b->quantidade; i++)
-        if (!b->usadas[i])
-            carga = nextafterl(carga + b->cargaMinima[i], -INFINITY);
-    long double limite = nextafterl(carga / b->frota, -INFINITY);
-    /* Somente tempos inteiros garantem um makespan otimo inteiro. */
+    long double carga=nextafterl(fixada+b->cargaSufixo[nivel],-INFINITY);
+    long double limite=nextafterl(carga/b->frota,-INFINITY);
     return b->temposInteiros ? ceill(limite) : limite;
 }
 
-static void explorarDroneBB(BuscaDroneBB *b, int nivel, double makespan,
-                           long double cargaFixada)
+static int prepararOpcoesBB(BuscaDroneBB *b, int nivel)
 {
-    if (makespan >= b->limiteSuperior) return;
-    if (nivel == b->quantidade) {
-        b->limiteSuperior = makespan;
-        memcpy(b->melhor, b->parcial, (size_t)nivel * sizeof *b->melhor);
+    OpcaoDroneBB *opcoes=b->opcoes+(size_t)nivel*b->frota;
+    int total=0;
+    for(int k=1;k<=b->frota;k++) {
+        double duracao=duracaoConfiguracaoBB(b,nivel,k);
+        if(!isfinite(duracao)) continue;
+        double inicio=primeiroInicioPerfil(&b->perfis[nivel],b->frota,duracao,k);
+        double fim=inicio+duracao;
+        if(!isfinite(fim)) continue;
+        OpcaoDroneBB opcao={k,inicio,fim,nextafterl((long double)k*duracao,-INFINITY)};
+        int j=total;
+        while(j>0 && (opcao.fim<opcoes[j-1].fim ||
+              (opcao.fim==opcoes[j-1].fim && opcao.consumo<opcoes[j-1].consumo))) {
+            opcoes[j]=opcoes[j-1]; j--;
+        }
+        opcoes[j]=opcao; total++;
+    }
+    return total;
+}
+
+static void explorarDroneBB(BuscaDroneBB *b, int nivel, double makespan, long double cargaFixada)
+{
+    if(b->maxNos && b->nos>=b->maxNos) {b->interrompida=true; return;}
+    b->nos++;
+    if(makespan>=b->limiteSuperior) return;
+    if(nivel==b->quantidade) {
+        b->limiteSuperior=makespan;
+        memcpy(b->melhor,b->parcial,(size_t)nivel*sizeof *b->melhor);
+        if(b->meta>=0.0 && makespan<=b->meta) b->metaAtingida=true;
         return;
     }
-    if (limiteCargaDroneBB(b, cargaFixada) >= (long double)b->limiteSuperior)
-        return;
-    /* Limite por missao: considera o melhor encaixe entre TODAS as
-     * configuracoes viaveis, para nao podar escolhas melhores de quantidade. */
-    for (int i = 0; i < b->quantidade; i++) {
-        if (b->usadas[i]) continue;
-        double menorFim = INFINITY;
-        for (int k = 1; k <= b->frota; k++) {
-            double duracao = duracaoConfiguracaoBB(b, i, k);
-            if (!isfinite(duracao)) continue;
-            double inicio = primeiroInicioBB(b, nivel, duracao, k);
-            menorFim = fmin(menorFim, inicio + duracao);
+    if(limiteCargaDroneBB(b,nivel,cargaFixada)>=(long double)b->limiteSuperior) return;
+    /* Limite de cada missao restante, consultando o perfil em tempo linear. */
+    for(int i=nivel;i<b->quantidade;i++) {
+        double menor=INFINITY;
+        for(int k=1;k<=b->frota;k++) {
+            double duracao=duracaoConfiguracaoBB(b,i,k);
+            if(!isfinite(duracao)) continue;
+            double inicio=primeiroInicioPerfil(&b->perfis[nivel],b->frota,duracao,k);
+            menor=fmin(menor,inicio+duracao);
         }
-        if (menorFim >= b->limiteSuperior) return;
+        if(menor>=b->limiteSuperior) return;
     }
-    for (int i = 0; i < b->quantidade; i++) {
-        if (b->usadas[i]) continue;
-        bool simetrica = false;
-        for (int j = 0; j < i; j++) {
-            if (!b->usadas[j] && tarefasEquivalentesBB(b, i, j)) {
-                simetrica = true;
-                break;
-            }
-        }
-        if (simetrica) continue;
-        for (int k = 1; k <= b->frota; k++) {
-            double duracao = duracaoConfiguracaoBB(b, i, k);
-            if (!isfinite(duracao)) continue;
-            double inicio = primeiroInicioBB(b, nivel, duracao, k);
-            double fim = inicio + duracao;
-            if (!isfinite(fim) || fim >= b->limiteSuperior) continue;
-            b->parcial[nivel] = b->tarefas[i];
-            b->parcial[nivel].qtdDrones = k;
-            b->parcial[nivel].tempoInicio = inicio;
-            b->parcial[nivel].tempoFim = fim;
-            b->usadas[i] = true;
-            long double consumo = nextafterl((long double)k * duracao, -INFINITY);
-            long double novaCarga = nextafterl(cargaFixada + consumo, -INFINITY);
-            explorarDroneBB(b, nivel + 1, fmax(makespan, fim), novaCarga);
-            b->usadas[i] = false;
-        }
+    int total=prepararOpcoesBB(b,nivel);
+    OpcaoDroneBB *opcoes=b->opcoes+(size_t)nivel*b->frota;
+    for(int j=0;j<total;j++) {
+        OpcaoDroneBB opcao=opcoes[j];
+        if(opcao.fim>=b->limiteSuperior) continue;
+        b->parcial[nivel]=(MissaoDrone){b->tarefas[nivel].cliente,opcao.k,opcao.inicio,opcao.fim};
+        PerfilDrone *filho=&b->perfis[nivel+1], *pai=&b->perfis[nivel];
+        filho->quantidade=pai->quantidade;
+        memcpy(filho->eventos,pai->eventos,(size_t)pai->quantidade*sizeof(EventoDrone));
+        ocuparPerfilDrone(filho,opcao.inicio,opcao.fim,opcao.k);
+        long double carga=nextafterl(cargaFixada+opcao.consumo,-INFINITY);
+        explorarDroneBB(b,nivel+1,fmax(makespan,opcao.fim),carga);
+        if(b->interrompida || b->metaAtingida) break;
     }
 }
 
-double escalonarMissoesDroneBB(const Instancia *inst, MissaoDrone *missoes,
-                               int quantidade)
+/* Reconstrucao de incumbentes com a regra compartilhada. Passo 0 utiliza
+ * as quantidades recebidas; passo 1 escolhe menor termino em cada missao. */
+static void construirIncumbenteBB(BuscaDroneBB *b, bool guloso)
 {
-    if (inst == NULL || inst->n < 1 || inst->numDrones < 0 ||
-        quantidade < 0 || quantidade > inst->n - 1) return INFINITY;
-    if (quantidade == 0) return 0.0;
-    if (missoes == NULL || inst->clientes == NULL || inst->tempoDrone == NULL ||
-        inst->numDrones == 0) return INFINITY;
-    BuscaDroneBB b = {0};
-    b.inst = inst;
-    b.temposInteiros = true;
-    b.quantidade = quantidade;
-    b.frota = inst->numDrones;
-    b.limiteSuperior = INFINITY;
-    b.tarefas = malloc((size_t)quantidade * sizeof *b.tarefas);
-    b.cargaMinima = malloc((size_t)quantidade * sizeof *b.cargaMinima);
-    b.usadas = calloc((size_t)quantidade, sizeof *b.usadas);
-    b.parcial = malloc((size_t)quantidade * sizeof *b.parcial);
-    b.melhor = malloc((size_t)quantidade * sizeof *b.melhor);
-    if (!b.tarefas || !b.cargaMinima || !b.usadas || !b.parcial || !b.melhor)
-        goto finalizar;
-    for (int i = 0; i < quantidade; i++) {
-        int cliente = missoes[i].cliente;
-        if (cliente <= 0 || cliente >= inst->n ||
-            !inst->clientes[cliente].elegivelDrone || inst->tempoDrone[cliente] == NULL)
-            goto finalizar;
-        for (int j = 0; j < i; j++)
-            if (missoes[j].cliente == cliente) goto finalizar;
-        int minimo = inst->clientes[cliente].minDrones;
-        if (minimo < 1 || minimo > inst->numDrones) goto finalizar;
-        b.tarefas[i] = missoes[i];
-        bool viavel = false;
-        b.cargaMinima[i] = INFINITY;
-        for (int k = minimo; k <= inst->numDrones; k++) {
-            double duracao = duracaoConfiguracaoBB(&b, i, k);
-            if (!isfinite(duracao)) continue;
-            viavel = true;
-            if (floor(duracao) != duracao) b.temposInteiros = false;
-            long double consumo = nextafterl((long double)k * duracao, -INFINITY);
-            b.cargaMinima[i] = fminl(b.cargaMinima[i], consumo);
-        }
-        if (!viavel) goto finalizar;
-    }
-    /* Solucao viavel inicial para limitar a arvore desde a raiz. */
-    double maximo = 0.0;
-    for (int i = 0; i < quantidade; i++) {
-        double melhorInicio = 0.0, fim = INFINITY;
-        int melhorK = 0;
-        for (int k = 1; k <= b.frota; k++) {
-            double duracao = duracaoConfiguracaoBB(&b, i, k);
-            if (!isfinite(duracao)) continue;
-            double inicio = primeiroInicioBB(&b, i, duracao, k);
-            if (inicio + duracao < fim) {
-                melhorInicio = inicio;
-                fim = inicio + duracao;
-                melhorK = k;
+    PerfilDrone *perfil=&b->perfis[0]; perfil->quantidade=0;
+    double maximo=0.0;
+    for(int i=0;i<b->quantidade;i++) {
+        int escolhido=0; double inicioMelhor=0.0, fimMelhor=INFINITY;
+        int recebido=b->tarefas[i].qtdDrones;
+        if(recebido==0) recebido=b->inst->clientes[b->tarefas[i].cliente].minDrones;
+        for(int k=1;k<=b->frota;k++) {
+            if(!guloso && k!=recebido) continue;
+            double duracao=duracaoConfiguracaoBB(b,i,k);
+            if(!isfinite(duracao)) continue;
+            double inicio=primeiroInicioPerfil(perfil,b->frota,duracao,k);
+            if(inicio+duracao<fimMelhor) {
+                escolhido=k; inicioMelhor=inicio; fimMelhor=inicio+duracao;
             }
         }
-        if (!isfinite(fim)) goto finalizar;
-        b.parcial[i] = b.tarefas[i];
-        b.parcial[i].qtdDrones = melhorK;
-        b.parcial[i].tempoInicio = melhorInicio;
-        b.parcial[i].tempoFim = fim;
-        maximo = fmax(maximo, fim);
+        if(!escolhido || !isfinite(fimMelhor)) {perfil->quantidade=0; return;}
+        b->parcial[i]=(MissaoDrone){b->tarefas[i].cliente,escolhido,inicioMelhor,fimMelhor};
+        ocuparPerfilDrone(perfil,inicioMelhor,fimMelhor,escolhido);
+        maximo=fmax(maximo,fimMelhor);
     }
-    b.limiteSuperior = maximo;
-    memcpy(b.melhor, b.parcial, (size_t)quantidade * sizeof *b.melhor);
-    explorarDroneBB(&b, 0, 0.0, 0.0L);
-    /* Publica apenas depois de concluir a prova de otimalidade. */
-    memcpy(missoes, b.melhor, (size_t)quantidade * sizeof *missoes);
+    if(maximo<b->limiteSuperior) {
+        b->limiteSuperior=maximo;
+        memcpy(b->melhor,b->parcial,(size_t)b->quantidade*sizeof *b->melhor);
+    }
+    perfil->quantidade=0;
+}
+
+double escalonarMissoesDroneBBMeta(const Instancia *inst, MissaoDrone *missoes,
+                                 int quantidade, unsigned long long maxNos,
+                                 double meta, ResultadoBB *resultado)
+{
+    if(resultado) *resultado=(ResultadoBB){.motivo=BB_ERRO};
+    if(!inst || inst->n<1 || inst->numDrones<0 || quantidade<0 || quantidade>inst->n-1 ||
+       !isfinite(meta) || (meta<0.0 && meta!=-1.0)) return INFINITY;
+    if(quantidade==0) {
+        if(resultado) *resultado=(ResultadoBB){.motivo=BB_OTIMO};
+        return 0.0;
+    }
+    if(!missoes || !inst->clientes || !inst->tempoDrone || inst->numDrones==0) return INFINITY;
+    BuscaDroneBB b={0}; b.inst=inst; b.quantidade=quantidade; b.frota=inst->numDrones;
+    b.temposInteiros=true; b.maxNos=maxNos; b.meta=meta; b.limiteSuperior=INFINITY;
+    size_t n=(size_t)quantidade, capacidadePerfil=2*n+2;
+    b.tarefas=malloc(n*sizeof *b.tarefas); b.parcial=malloc(n*sizeof *b.parcial);
+    b.melhor=malloc(n*sizeof *b.melhor);
+    b.cargaSufixo=calloc(n+1,sizeof *b.cargaSufixo);
+    b.perfis=calloc(n+1,sizeof *b.perfis);
+    b.eventos=malloc((n+1)*capacidadePerfil*sizeof *b.eventos);
+    b.opcoes=malloc(n*(size_t)b.frota*sizeof *b.opcoes);
+    if(!b.tarefas || !b.parcial || !b.melhor || !b.cargaSufixo ||
+       !b.perfis || !b.eventos || !b.opcoes) goto finalizar;
+    for(size_t i=0;i<=n;i++) b.perfis[i].eventos=b.eventos+i*capacidadePerfil;
+    for(int i=0;i<quantidade;i++) {
+        int cliente=missoes[i].cliente;
+        if(cliente<=0 || cliente>=inst->n || !inst->clientes[cliente].elegivelDrone ||
+           !inst->tempoDrone[cliente]) goto finalizar;
+        for(int j=0;j<i;j++) if(missoes[j].cliente==cliente) goto finalizar;
+        int minimo=inst->clientes[cliente].minDrones;
+        if(minimo<1 || minimo>b.frota) goto finalizar;
+        b.tarefas[i]=missoes[i];
+    }
+    for(int i=quantidade-1;i>=0;i--) {
+        long double menor=INFINITY;
+        for(int k=1;k<=b.frota;k++) {
+            double duracao=duracaoConfiguracaoBB(&b,i,k);
+            if(!isfinite(duracao)) continue;
+            if(floor(duracao)!=duracao) b.temposInteiros=false;
+            menor=fminl(menor,nextafterl((long double)k*duracao,-INFINITY));
+        }
+        if(!isfinite(menor)) goto finalizar;
+        b.cargaSufixo[i]=nextafterl(menor+b.cargaSufixo[i+1],-INFINITY);
+    }
+    construirIncumbenteBB(&b,false);
+    construirIncumbenteBB(&b,true);
+    if(!isfinite(b.limiteSuperior)) goto finalizar;
+    if(meta>=0.0 && b.limiteSuperior<=meta) b.metaAtingida=true;
+    else explorarDroneBB(&b,0,0.0,0.0L);
+    memcpy(missoes,b.melhor,n*sizeof *missoes);
+    if(resultado) {
+        resultado->motivo=b.metaAtingida ? BB_META_ATINGIDA : b.interrompida ? BB_LIMITE_NOS : BB_OTIMO;
+        resultado->nos=b.nos;
+        resultado->limiteInferior=(double)limiteCargaDroneBB(&b,0,0.0L);
+    }
 finalizar:
-    free(b.tarefas);
-    free(b.cargaMinima);
-    free(b.usadas);
-    free(b.parcial);
-    free(b.melhor);
+    free(b.tarefas); free(b.parcial); free(b.melhor); free(b.cargaSufixo);
+    free(b.perfis); free(b.eventos); free(b.opcoes);
     return b.limiteSuperior;
 }
 
-int gerarVizinhoAvaliado(const Instancia *inst, const Solucao *atual, Solucao *vizinho){
+double escalonarMissoesDroneBBLimitado(const Instancia *inst, MissaoDrone *missoes,
+                                     int quantidade, unsigned long long maxNos, bool *otimoProvado)
+{
+    ResultadoBB resultado;
+    double valor=escalonarMissoesDroneBBMeta(inst,missoes,quantidade,maxNos,-1.0,&resultado);
+    if(otimoProvado) *otimoProvado=resultado.motivo==BB_OTIMO;
+    return valor;
+}
+
+double escalonarMissoesDroneBB(const Instancia *inst, MissaoDrone *missoes, int quantidade)
+{
+    return escalonarMissoesDroneBBMeta(inst,missoes,quantidade,0,-1.0,NULL);
+}
+
+int gerarVizinhoAvaliadoPonderado(const Instancia *inst, const Solucao *atual,
+                                Solucao *vizinho, const double pesos[NUM_MOVIMENTOS],
+                                TipoMovimento *tipo){
     if (inst == NULL || atual == NULL || vizinho == NULL ||
-        !atual->avaliacaoValida || !atual->cronogramaValido ||
+        !atual->avaliacaoValida || (!atual->cronogramaValido && !atual->branchBoundAplicado) ||
         atual->prefixosDrone == NULL || vizinho->prefixosDrone == NULL)
         return 0;
     AlteracaoVizinho alteracao;
-    if (!gerarVizinhoInterno(inst, atual, vizinho, &alteracao)) return 0;
+    if (!gerarVizinhoInterno(inst, atual, vizinho, &alteracao, pesos, tipo)) return 0;
     if (alteracao.primeiraDrone == atual->numMissoesDrone &&
         vizinho->numMissoesDrone == atual->numMissoesDrone) {
         /* Apenas a rota mudou: preserva todo o cronograma e seu estado. */
         memcpy(vizinho->prefixosDrone, atual->prefixosDrone,
-               ((size_t)atual->numMissoesDrone + 1) * ((size_t)inst->numDrones + 1) * sizeof(double));
+               ((size_t)atual->numMissoesDrone + 1) * sizeof(double));
         vizinho->tempoDrones = atual->tempoDrones;
-        vizinho->cronogramaValido = true;
-    } else if (!escalonarDesde(inst, vizinho, atual, alteracao.primeiraDrone)) return 0;
+        vizinho->cronogramaValido = atual->cronogramaValido;
+    } else if (!escalonarDesde(inst, vizinho, atual,
+                    atual->cronogramaValido ? alteracao.primeiraDrone : 0)) return 0;
     double tempo = atual->tempoCaminhao + alteracao.deltaCaminhao;
     if (vizinho->numMissoesCaminhao == 0) tempo = 0.0;
     if (!isfinite(tempo) || tempo < -1e-9) return 0;
@@ -732,6 +843,10 @@ int gerarVizinhoAvaliado(const Instancia *inst, const Solucao *atual, Solucao *v
     vizinho->makespan = fmax(vizinho->tempoCaminhao, vizinho->tempoDrones);
     vizinho->avaliacaoValida = true;
     return 1;
+}
+
+int gerarVizinhoAvaliado(const Instancia *inst, const Solucao *atual, Solucao *vizinho){
+    return gerarVizinhoAvaliadoPonderado(inst, atual, vizinho, NULL, NULL);
 }
 
 int calcularMakespan(const Instancia *inst, Solucao *solucao){

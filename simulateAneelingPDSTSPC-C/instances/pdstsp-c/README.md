@@ -52,16 +52,31 @@ if (!lerTemposDrone("instances/pdstsp-c/small/tau_kj_15-r-e.txt", &inst)) {
 }
 ```
 
-O `main.c` executa automaticamente 41 instancias: as 30 pequenas (ate 30
-clientes) e as 11 medias disponiveis (31 a 100 clientes, convencao deste lote).
-As medias continuam em `large/`, pois a fonte original nao possui a categoria
-media. Instancias acima de 100 clientes ficam fora deste teste.
+O `main.c` executa as 23 instancias disponiveis sem otimo comprovado nas
+Tabelas 1 e 2 de Montemanni et al. (2024): 3 pequenas, 3 medias e 17 grandes.
+O criterio e LB < UB na coluna de melhores limites da publicacao; o UB
+continua sendo usado na coluna de melhor literatura. A lista com limites
+inferiores/superiores e rotulos da fonte esta em `literature_unproven.csv`.
 
-Cada instancia recebe uma calibracao e uma execucao de SA com os parametros
-padrao. A semente 123 inicializa uma unica sequencia aleatoria para o lote.
+Os arquivos `144-rc-c` e `173-rc-c` correspondem, respectivamente, aos rotulos
+`144-rc-r` e `173-rc-r` da Tabela 2, que diferem dos nomes do conjunto ORLab.
+Essa correspondencia de nomenclatura esta registrada no CSV e nos comentarios
+em `main.c`. Os arquivos e matrizes originais nao foram renomeados.
+
+Cada instancia recebe 100 execucoes de SA com os parametros padrao (2300 no
+total). Cada repeticao reconstroi a rota inicial por vizinho mais proximo e
+2-opt e recalibra a temperatura. A semente base usa `time(NULL)`; a semente
+de cada repeticao e base + indice da instancia * 100 + indice da repeticao,
+com indices iniciados em zero, e aparece na saida para reproducao.
 A tabela mostra makespan inicial, SA, melhor literatura em minutos, gap,
 melhoria inicial, temperatura e CPU. Falhas nao interrompem as demais
 instancias e produzem codigo de saida de falha ao final.
+
+O resumo `resultados/resumo_sem_otimo_100_execucoes.csv` e atualizado apos
+cada instancia: quantidade concluida, melhor, media, referencia, gap do melhor,
+execucao/semente do melhor e contagens de resultados abaixo/iguais a referencia.
+O arquivo e recriado a cada lote. O registro detalhado deste lote fica em
+`resultados/benchmark_sem_otimo_100_execucoes.txt`.
 
 A coluna de literatura usa o melhor limite superior viavel (UB) das Tabelas
 1 e 2 de Montemanni et al. (2024), nunca o limite inferior (LB).
@@ -88,3 +103,140 @@ projeto. Para cada par, foram construidas as matrizes do caminhao, avaliada a
 solucao inicial e escalonada/avaliada uma solucao mista com todos os clientes
 elegiveis nos drones e os demais no caminhao. Tambem foram conferidos os IDs,
 as dimensoes das matrizes e os valores das celulas (nao negativos ou `-1`).
+
+## Pesos adaptativos do SA
+
+Os parametros padrao agora ativam `pesosAdaptativos`, com `taxaAdaptacao=0.2`
+e `pesoMinimo=0.1`. A cada chamada do SA, os sete tipos de movimento iniciam
+com peso 1. O sorteio e proporcional aos pesos apenas entre tipos disponiveis.
+Ao final de cada temperatura, o peso combina 80% do peso anterior com 20%
+da pontuacao media por tentativa, respeitando o piso. Tipos nao tentados
+mantem o peso; contadores sao zerados a cada bloco.
+
+Pontuacoes exclusivas: novo melhor global=5, melhora da atual=3, piora
+aceita=1, empate ou rejeicao=0. A regra de aceitacao por temperatura e o
+makespan como objetivo continuam os mesmos. A calibracao usa sorteio uniforme.
+Para comparar com o comportamento anterior, defina
+`parametros.pesosAdaptativos = false` antes de executar o SA.
+
+O arquivo `resultados/benchmark_pequenas_medias.txt` foi produzido antes
+da introducao desses pesos; seus resultados correspondem ao sorteio uniforme.
+
+## Quatro melhores solucoes do SA
+
+Durante cada execucao, `simulatedAnnealing` mantem `melhores[4]` na memoria,
+com vetores independentes para rota, missoes dos drones e caches de prefixos.
+A solucao inicial ocupa a primeira vaga. Toda candidata viavel avaliada pode
+entrar no conjunto, mesmo se a transicao for rejeitada pela regra do SA.
+
+As vagas sao preenchidas com solucoes distintas. Depois de completar quatro,
+uma candidata entra somente se seu makespan for menor que o da pior armazenada.
+O conjunto fica ordenado da melhor para a pior; empates distintos preenchem
+vagas, mas nao substituem a pior quando o conjunto esta cheio. Repeticoes da
+mesma rota e sequencia de missoes/quantidades sao ignoradas.
+
+Os quatro slots sao internos a cada chamada, sem compartilhamento entre
+instancias. Ao terminar, a funcao retorna a melhor em `solucao` e libera os
+buffers internos. `atualizarMelhoresSolucoesSA` implementa essa atualizacao.
+
+## Branch and Bound com ordem fixa
+
+`escalonarMissoesDroneBB` escolhe somente a quantidade viavel de drones de
+cada missao e recalcula os horarios. O nivel da arvore corresponde ao indice
+no vetor recebido: nao sao exploradas permutacoes dos clientes. O limite
+inferior de carga do artigo continua ativo.
+
+Para cada combinacao de quantidades, as missoes sao processadas na ordem
+recebida e inseridas no primeiro intervalo viavel. Essa ordem e de prioridade,
+nao uma restricao de precedencia: uma missao posterior pode aproveitar uma
+janela anterior. O resultado e o melhor entre as combinacoes sob essa regra,
+sem pretensao de provar o otimo irrestrito de todas as ordens.
+
+## Refinamento periodico pelo Branch and Bound
+
+O SA agora chama o BB apos cinco niveis consecutivos de temperatura sem
+melhora global (`niveisSemMelhoraBB=5`). A cada disparo, sorteia uniformemente
+uma das elites preenchidas que satisfaz `tempoDrones > tempoCaminhao` e
+`branchBoundAplicado == false`. Sem candidatas elegiveis, nenhuma busca e feita.
+O contador reinicia apos o disparo, evitando chamadas consecutivas em todos os
+niveis. Uma melhora global pelo SA tambem reinicia a contagem.
+
+O orcamento padrao e `maxNosBB=10000` nos por chamada. A versao limitada retorna
+o melhor cronograma encontrado e pode encerrar sem prova de otimalidade;
+a versao original `escalonarMissoesDroneBB` continua sem limite. A tentativa
+fica marcada mesmo quando nao melhora ou esgota o orcamento. Defina
+`parametros.bbPeriodico=false` para desativar o refinamento.
+
+O BB mantem a ordem das missoes e otimiza suas quantidades. O incumbente e
+preservado se o resultado nao melhorar. O arquivo e reordenado e duplicatas
+sao removidas depois do refinamento. Quando o melhor global melhora, ele
+passa a ser a solucao atual do SA.
+
+A marca acompanha copias e reordenacoes da elite. Trocas apenas no caminhao
+preservam a marca, pois nao alteram o subproblema dos drones. Novas mudancas
+nas missoes dos drones ou suas quantidades permitem um novo refinamento.
+O controle usa tambem um historico por sequencia de clientes dos drones,
+conservado durante a execucao mesmo quando a solucao sai das quatro elites.
+Quantidades e rota do caminhao nao fazem parte da chave; a instancia deve
+permanecer imutavel. Cronogramas em cache podem ser reutilizados sem nova busca.
+Tentativas sem prova podem voltar com maior orcamento; se a meta anterior
+foi atingida, uma nova rota mais curta pode justificar completar a busca.
+
+SA e BB compartilham a regra de insercao no primeiro intervalo livre com
+capacidade suficiente. Apos o BB, o escalonador reproduz esses mesmos horarios,
+reconstroi os caches de prefixos e o calculo completo valida o makespan.
+Vizinhos que mudam apenas o caminhao preservam todo o cronograma; mudancas
+nos drones reconstroem somente o sufixo a partir da primeira missao alterada.
+A calibracao da temperatura continua sem BB.
+
+Os resultados salvos em `resultados/benchmark_pequenas_medias.txt` antecedem
+tambem a integracao periodica do BB.
+
+## Escalonamento compartilhado por intervalos livres
+
+`primeiroInicioPerfil` e `ocuparPerfilDrone`, internos a `cv.c`, sao usados
+tanto pelo SA quanto pelo BB. O historico de ocupacao e um perfil de eventos
+ordenados, com partidas e retornos agregados em cada instante. Uma varredura
+linear encontra a primeira janela livre, inclusive em intervalos anteriores.
+`prefixosDrone[i]` armazena apenas o maior termino das primeiras `i` missoes;
+nao armazena mais a ultima disponibilidade de cada drone. O vetor tem `n`
+posicoes, incluindo o prefixo vazio, reduzindo memoria e custo das copias.
+
+No exemplo A=(1 drone,10 min), B=(3 drones,5 min), C=(2 drones,8 min), com
+frota 3, ambos produzem A=[0,10), B=[10,15), C=[0,8), makespan 15.
+Reescalonar a mesma ordem e quantidades preserva esse resultado. A ordem de
+processamento permanece A,B,C; a insercao em janelas nao impoe precedencia.
+
+O teste `test_escalonamento_unificado.c` verifica esse exemplo, a reproducao
+dos horarios do BB e 1000 vizinhos comparados a reconstrucoes completas.
+Resultados de benchmarks anteriores precisam ser regenerados para avaliar
+a qualidade e o tempo de execucao desta nova regra.
+
+## Propostas 3, 4, 5 e 6 aplicadas
+
+- B&B: carga minima acumulada em sufixos, com consulta O(1) por no; perfis
+  de eventos reutilizados por profundidade, sem alocacao em cada ramo;
+  quantidades exploradas por menor termino, desempate por consumo; incumbente
+  inicial e o melhor entre as quantidades recebidas e a construcao gulosa.
+- Meta: `escalonarMissoesDroneBBMeta` pode parar ao obter tempo dos drones
+  menor ou igual ao tempo do caminhao. `ResultadoBB` distingue `BB_META_ATINGIDA`,
+  `BB_OTIMO`, `BB_LIMITE_NOS` e `BB_ERRO`, incluindo nos visitados e limite de carga.
+  `BB_OTIMO` refere-se somente a busca de quantidades sob ordem/regra fixas.
+- Historico: `HistoricoBBSA`, inicializado com `{0}`, armazena cronogramas,
+  orcamento e status por sequencia de clientes; `liberarHistoricoBBSA` libera
+  toda a memoria ao final. A interface `refinarEliteComHistoricoSA` mantem
+  o sorteio uniforme entre elites elegiveis e reaproveita resultados anteriores.
+- Caminhao: novos movimentos `REINSERIR_CAMINHAO` e `DOIS_OPT_CAMINHAO`
+  participam dos pesos adaptativos. Ambos estao disponiveis com pelo menos
+  tres clientes; deltas incluem os arcos necessarios em matrizes assimetricas.
+  A solucao inicial continua com todos no caminhao, mas utiliza vizinho mais
+  proximo seguido de 2-opt. A rota por indice e mantida como alternativa para
+  evitar iniciar pior quando o vizinho mais proximo for desfavoravel.
+
+`resultados/benchmark_propostas_3_4_5_6.txt` registra a execucao deste conjunto
+com a nova implementacao. Comparar uma unica semente com resultados antigos
+nao isola o beneficio de cada componente nem garante melhoria em toda instancia.
+
+`resultados/benchmark_sem_otimo_todos.txt` registra o lote das 23 instancias.
+`resultados/benchmark_sem_otimo.txt` corresponde ao subconjunto anterior de
+seis pequenas/medias e foi preservado.
