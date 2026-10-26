@@ -12,34 +12,16 @@ typedef struct CasoBenchmark {
     double melhorLiteratura;
 } CasoBenchmark;
 
-/* Todas as instancias disponiveis sem otimo comprovado nas Tabelas 1 e 2
- * de Montemanni et al. (2024): os melhores limites LB e UB nao coincidem.
- * A coluna melhorLiteratura guarda o UB (melhor solucao viavel conhecida).
- * https://doi.org/10.1016/j.cor.2023.106514 */
+/* Quatro instancias ainda abertas no pacote oficial ORLab de 2025.
+ * Logs results/logs/tsp/: status FEASIBLE e LB < UB.
+ * melhorLiteratura guarda o UB; a revisao dos 60 casos esta em
+ * resultados/revisao_literatura_2025/relatorio_revisao_2024_2025.md.
+ * https://orlab.com.vn/download/data-and-results-of-pdstsp-c-and-pdsop-c/ */
 static const CasoBenchmark casos[] = {
-    {"20-c-c", "small", 43.0}, /* LB=40 */
-    {"21-c-c", "small", 62.0}, /* LB=60 */
-    {"26-r-c", "small", 103.0}, /* LB=101 */
-    {"67-c-c", "large", 76.0}, /* LB=73 */
-    {"91-r-c", "large", 124.0}, /* LB=120 */
-    {"99-rc-c", "large", 100.0}, /* LB=98 */
-    {"101-r-c", "large", 120.0}, /* LB=114 */
-    {"103-rc-c", "large", 124.0}, /* LB=120 */
-    {"105-rc-e", "large", 120.0}, /* LB=109 */
-    {"108-rc-e", "large", 136.0}, /* LB=134 */
-    {"114-rc-c", "large", 96.0}, /* LB=94 */
-    {"121-rc-e", "large", 124.0}, /* LB=121 */
-    {"126-r-c", "large", 160.0}, /* LB=151 */
-    {"126-rc-e", "large", 144.0}, /* LB=136 */
-    {"144-rc-c", "large", 128.0}, /* LB=122; rotulo 144-rc-r na Tabela 2 */
-    {"154-c-c", "large", 72.0}, /* LB=68 */
-    {"165-r-c", "large", 164.0}, /* LB=140 */
-    {"167-r-e", "large", 188.0}, /* LB=160 */
-    {"173-r-c", "large", 164.0}, /* LB=141 */
-    {"173-rc-c", "large", 133.0}, /* LB=115; rotulo 173-rc-r na Tabela 2 */
-    {"181-r-e", "large", 224.0}, /* LB=199 */
-    {"187-rc-e", "large", 196.0}, /* LB=167 */
-    {"200-r-e", "large", 212.0}, /* LB=162 */
+    {"67-c-c", "large", 74.0}, /* LB=73 */
+    {"165-r-c", "large", 160.0}, /* LB=156 */
+    {"167-r-e", "large", 180.0}, /* LB=179 */
+    {"181-r-e", "large", 216.0}, /* LB=215 */
 };
 
 static int testarInstancia(const CasoBenchmark *caso, double *resultado)
@@ -114,7 +96,7 @@ int main(void)
     const size_t total = 100;
     const size_t totalCasos = sizeof casos / sizeof casos[0];
     size_t concluidasTotal = 0;
-    FILE *resumo = fopen("resultados/resumo_sem_otimo_100_execucoes.csv", "w");
+    FILE *resumo = fopen("resultados/resumo_quatro_abertas_2025_100_execucoes.csv", "w");
     if (resumo == NULL) {
         perror("Nao foi possivel criar o resumo em resultados");
         return EXIT_FAILURE;
@@ -127,9 +109,9 @@ int main(void)
         double melhor = 0.0, soma = 0.0;
         size_t execucaoMelhor = 0, melhoresLiteratura = 0, iguaisLiteratura = 0;
         printf("\nInstancia %zu/%zu: %s; %zu execucoes independentes de SA.\n", c + 1, totalCasos, caso->nome, total);
-        printf("Sem otimo comprovado na referencia de 2024. Cada execucao reconstroi a solucao inicial.\n");
-        printf("Melhor literatura: melhor UB das Tabelas 1 e 2, Montemanni et al. (2024).\n");
-        printf("Fonte: https://doi.org/10.1016/j.cor.2023.106514\n");
+        printf("Sem otimo comprovado no pacote ORLab de 2025. Cada execucao reconstroi a solucao inicial.\n");
+        printf("Melhor literatura: UB dos logs PDSTSP-c do pacote oficial ORLab (2025).\n");
+        printf("Fonte: https://orlab.com.vn/download/data-and-results-of-pdstsp-c-and-pdsop-c/\n");
         printf("Gap = 100 * (SA - literatura) / literatura. CPU inclui calibracao e SA.\n\n");
         printf("%-10s %8s %6s %12s %12s %18s %9s %10s %10s %10s %s\n",
                "Instancia", "Clientes", "Drones", "Inicial(min)", "SA(min)",
@@ -170,6 +152,6 @@ int main(void)
     int erroResumo = ferror(resumo);
     if (fclose(resumo) != 0) erroResumo = 1;
     printf("\nTOTAL: %zu/%zu execucoes concluidas.\n", concluidasTotal, totalCasos * total);
-    printf("Literatura: melhores solucoes conhecidas, sem otimo comprovado nestas instancias.\n");
+    printf("Literatura: melhores solucoes conhecidas; quatro casos sem otimo comprovado na fonte ORLab de 2025.\n");
     return concluidasTotal == totalCasos * total && !erroResumo ? EXIT_SUCCESS : EXIT_FAILURE;
 }

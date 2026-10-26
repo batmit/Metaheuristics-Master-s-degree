@@ -1,0 +1,47 @@
+and synchronization of the drones as a flow problem (see [17] for more detailed
+explanations): Constraint (6) states the flow going out from node 0 has to be
+less than or equal to m (remind that each drone is represented as a unit of flow);
+Constraints (7) impose that if a customer j is serviced by k drones, than the flow
+entering node j has to equal k; Constraints (8) are classic conservation equalities,
+imposing that the flows entering and exiting a node must be equal. Constraints
+(9) activate the variables y corresponding to arcs used by flows (variables f)
+which are necessary to calculate the completion time of drones. Constraints
+(10) are active only if the variable yij = 1 and state that the synchronization
+constraint on arc (i, j) must be respected. This is achieved through the CP-SAT
+command OnlyEnforceIf [22], which is indicated with = ⇒ in the model. The
+remaining constraints (11)-(15) define the domain of the variables.
+2.3. Valid inequality
+The above basic model can be improved by means of the following new valid
+inequality:
+mα ≥
+X
+j∈CF
+X
+qj ≤k≤pj
+kτ k
+j zk
+j (16)
+Inequality (16) constraints α to be at least the total time spent on a mission
+by all the drones, divided by the number of drones used. Assuming that at
+optimality the drones will more or less balance the workload among them, makes
+the inequality effective. Inequality (16) exposes directly mission times to α,
+without filtering them through T and z variables, making the linear relaxation
+of the model much tighter. Note however that (16) fails to capture the time
+waited by the drones to synchronize with the others in case of multi-drone
+missions. Finally, inequality (16) will be valid also for all the models discussed
+in Section 3 for the PDSVRP-c.
+3. The Parallel Drone V ehicle Routing Problem with Collective
+Drones
+In this section, we build upon Section 2 and introduce the PDSVRP-c, a
+natural extension of the PDSTSP-c where multiple vehicles operate in parallel
+to the drones. The problem is introduced in Section 3.1 while two models based
+on Constraint Programming are discussed in Sections 3.2 and 3.3. The first one
+is a 2-indices formulation based on the CP 1 model of the previous section while
+the second one is a 3-indices formulation. Section 3.4 outlines a MILP model
+to serve as a baseline.
+3.1. Problem Description
+A formal definition of the PDSVRP-c can be proposed as a straightforward
+extension of the PDSTSP-c provided in Section 2.1. The difference is that now
+we have a fleet S of s trucks, with the same characteristics of the single truck
+employed for the PDSTSP-c: unlimited capacity, unlimited range, and same
+7

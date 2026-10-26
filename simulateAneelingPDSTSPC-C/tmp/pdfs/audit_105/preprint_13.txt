@@ -1,0 +1,43 @@
+(61)-(66) define the domain of the variables.
+3.4.1. Separation of the subtour elimination constraints
+The subtour elimination constraints (58) are dynamically added to the MILP
+as Lazy constraints (available in the most popular MILP solvers). Specifically,
+the solver starts by disregarding the constraints declaredlazy and once a feasible
+integer solution is found it invokes a user defined separation procedure. In our
+case, since the solution on hand is integer, the separation is a simple O(|E|)
+exploration of the graphs Gk = (V, E k) with Ek = {(i, j) ∈ E : wk
+ij = 1} to look
+for subtours not involving the depot.
+4. Experimental Results
+All the models presented in previous sections have been coded in Python
+3.11.2. The Constraint Programming models of Sections 2 and 3 have been
+solved via the CP-SAT solver of Google OR-Tools 9.6 [22] while the Mixed
+Integer Linear model of Section 3 has been solved with Gurobi 10.0 [7].
+The outcome of the experimental campaign is discussed in the remainder of
+this section and is organized according to the different problems tackled. Tables
+1-8 report, for each instance: i) the instance name; ii) the lower bound eventually
+produced and the best heuristic solution ([LB, UB]); iii) the computing time to
+find the best heuristic solution (Sec bst); iv) the eventual computing time to
+prove optimality (Sectot); v) a final summary column (Best bounds) containing
+the current state-of-the-art results of each instance for easing future research.
+In addition, we use a dash whenever a result is not retrieved or the time limit
+is reached, and we mark in italics the results of our models not matching nor
+improving best-known bounds while in bold those producing new best bounds.
+Hardware configurations, solvers used, experimental settings and time limits are
+finally reported in the notes of the tables for each approach.
+4.1. Benchmark Instances
+To evaluate the performance of the proposed models for both the PDSTSP-c
+and the new PDSVRP-c, we consider the instances originally introduced in [17]
+for the PDSTSP-c, and available at http://orlab.com.vn/home/download.
+The number n of customers varies from 15 to 200 (first number of the instance
+name) and the instances are divided into small (n ≤ 30) and large (n > 30). The
+number m of drones available varies in the range [3, 6] for the small instances and
+[5, 10] for the large ones. The traveling distances for trucks are computed using
+Manhattan distances and a speed of 30 km/h, while drones follow the Euclidean
+distance and the optimal travel times (rounded up to the nearest integer) are
+pre-calculated for each collaborative cluster of k drones. The interested reader
+can find all the details of the instances in [17].
+For generating PDSVRP-c instances we used the same set of benchmarks
+and added the number s of trucks chosen in the range [2 , 3] for small instances
+and in [2 , 5] for large instances.
+13

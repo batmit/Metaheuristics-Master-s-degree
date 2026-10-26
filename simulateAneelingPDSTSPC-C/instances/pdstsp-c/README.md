@@ -52,18 +52,20 @@ if (!lerTemposDrone("instances/pdstsp-c/small/tau_kj_15-r-e.txt", &inst)) {
 }
 ```
 
-O `main.c` executa as 23 instancias disponiveis sem otimo comprovado nas
-Tabelas 1 e 2 de Montemanni et al. (2024): 3 pequenas, 3 medias e 17 grandes.
-O criterio e LB < UB na coluna de melhores limites da publicacao; o UB
-continua sendo usado na coluna de melhor literatura. A lista com limites
-inferiores/superiores e rotulos da fonte esta em `literature_unproven.csv`.
+O `main.c` executa apenas as quatro instancias ainda abertas no pacote oficial
+ORLab de 2025: `67-c-c` (LB=73, UB=74), `165-r-c` (156, 160),
+`167-r-e` (179, 180) e `181-r-e` (215, 216). O criterio e status FEASIBLE e
+LB < UB nos logs PDSTSP-c; a coluna de literatura usa o UB.
+O cruzamento das 60 instancias esta em
+`resultados/revisao_literatura_2025/relatorio_revisao_2024_2025.md`.
+`literature_unproven.csv` preserva o conjunto historico de 23 casos de 2024.
 
 Os arquivos `144-rc-c` e `173-rc-c` correspondem, respectivamente, aos rotulos
 `144-rc-r` e `173-rc-r` da Tabela 2, que diferem dos nomes do conjunto ORLab.
-Essa correspondencia de nomenclatura esta registrada no CSV e nos comentarios
-em `main.c`. Os arquivos e matrizes originais nao foram renomeados.
+Essa correspondencia de nomenclatura esta registrada no CSV historico.
+Os arquivos e matrizes originais nao foram renomeados.
 
-Cada instancia recebe 100 execucoes de SA com os parametros padrao (2300 no
+Cada instancia recebe 100 execucoes de SA com os parametros padrao (400 no
 total). Cada repeticao reconstroi a rota inicial por vizinho mais proximo e
 2-opt e recalibra a temperatura. A semente base usa `time(NULL)`; a semente
 de cada repeticao e base + indice da instancia * 100 + indice da repeticao,
@@ -72,18 +74,19 @@ A tabela mostra makespan inicial, SA, melhor literatura em minutos, gap,
 melhoria inicial, temperatura e CPU. Falhas nao interrompem as demais
 instancias e produzem codigo de saida de falha ao final.
 
-O resumo `resultados/resumo_sem_otimo_100_execucoes.csv` e atualizado apos
+O resumo `resultados/resumo_quatro_abertas_2025_100_execucoes.csv` e atualizado apos
 cada instancia: quantidade concluida, melhor, media, referencia, gap do melhor,
 execucao/semente do melhor e contagens de resultados abaixo/iguais a referencia.
-O arquivo e recriado a cada lote. O registro detalhado deste lote fica em
-`resultados/benchmark_sem_otimo_100_execucoes.txt`.
+O arquivo e recriado a cada lote. Para guardar tambem a saida detalhada, redirecione
+a execucao para um novo arquivo. Os resultados do lote historico de 23 casos,
+`resultados/resumo_sem_otimo_100_execucoes.csv` e
+`resultados/benchmark_sem_otimo_100_execucoes.txt`, permanecem separados.
 
-A coluna de literatura usa o melhor limite superior viavel (UB) das Tabelas
-1 e 2 de Montemanni et al. (2024), nunca o limite inferior (LB).
-Os valores por instancia tambem estao em `literature_small_medium.csv`;
+A coluna de literatura usa os limites superiores viaveis (UB) do pacote
+ORLab de 2025, nunca os limites inferiores (LB). Os valores atualizados e
+os logs/celulas da fonte estao em `resultados/revisao_literatura_2025/ainda_abertas.csv`;
 a lista usada na execucao esta em `casos` no `main.c`.
-Sao referencias da publicacao consultada, nao uma consulta online a cada teste.
-Alguns valores ainda nao possuem prova de otimalidade.
+Sao referencias da fonte consultada, sem consulta online durante cada teste.
 
 Execute a partir da raiz do projeto:
 
