@@ -81,6 +81,7 @@ typedef struct Solucao {
     /* Maior termino apos cada prefixo; ocupacao e dada pelas proprias missoes. */
     double *prefixosDrone;
     bool cronogramaValido;
+    bool cronogramaExterno; /* Certificado validado (CP), sem cache first-fit. */
     bool avaliacaoValida;
     bool branchBoundAplicado; /* Refinamento ja tentado para estas missoes. */
 

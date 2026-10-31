@@ -1,0 +1,559 @@
+#include "SA.h"
+#include "cv.h"
+#include <math.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+ParametrosSA parametrosSAPadrao(void)
+{
+    return (ParametrosSA){
+        .alpha = 0.99,
+        .beta = 1.1,
+        .gamma = 0.95,
+        .saMax = 500,
+        .tempInicial = 10.0,
+        .tempFinal = 0.01,
+        .pesosAdaptativos = true,
+        .taxaAdaptacao = 0.2,
+        .pesoMinimo = 0.1,
+        .bbPeriodico = true,
+        .niveisSemMelhoraBB = 5,
+        .maxNosBB = 10000
+    };
+}
+
+int validarParametrosSA(const ParametrosSA *parametros)
+{
+    if (parametros == NULL)
+        return 0;
+
+    return isfinite(parametros->maxSegundos) && parametros->maxSegundos>=0 &&
+        !(parametros->melhorias & ~63u) && isfinite(parametros->alpha) &&
+        parametros->alpha > 0.0 && parametros->alpha < 1.0 &&
+        isfinite(parametros->beta) && parametros->beta > 1.0 &&
+        isfinite(parametros->gamma) &&
+        parametros->gamma > 0.0 && parametros->gamma < 1.0 &&
+        parametros->saMax > 0 &&
+        isfinite(parametros->tempInicial) &&
+        isfinite(parametros->tempFinal) &&
+        parametros->tempFinal > 0.0 &&
+        parametros->tempInicial > parametros->tempFinal &&
+        isfinite(parametros->taxaAdaptacao) && parametros->taxaAdaptacao > 0.0 &&
+        parametros->taxaAdaptacao <= 1.0 && isfinite(parametros->pesoMinimo) &&
+        parametros->pesoMinimo > 0.0 && parametros->pesoMinimo <= 1.0 &&
+        parametros->niveisSemMelhoraBB > 0 && parametros->maxNosBB > 0;
+}
+
+PesosMovimentosSA inicializarPesosMovimentosSA(void)
+{
+    PesosMovimentosSA estado = {0};
+    for (int i = 0; i < NUM_MOVIMENTOS; i++) estado.pesos[i] = 1.0;
+    return estado;
+}
+
+void atualizarPesosMovimentosSA(PesosMovimentosSA *estado, const ParametrosSA *p)
+{
+    for (int i = 0; i < NUM_MOVIMENTOS; i++) {
+        if (estado->tentativas[i] > 0) {
+            double media = estado->pontos[i] / estado->tentativas[i];
+            estado->pesos[i] = fmax(p->pesoMinimo,
+                (1.0 - p->taxaAdaptacao) * estado->pesos[i] + p->taxaAdaptacao * media);
+        }
+        estado->pontos[i] = 0.0;
+        estado->tentativas[i] = 0;
+    }
+}
+
+int calculaTemperaturaInicial(const Instancia *inst, const Solucao *referencia, const ParametrosSA *parametros, double *temperatura)
+{
+    if (!validarParametrosSA(parametros) || inst == NULL || referencia == NULL ||
+        temperatura == NULL || inst->n < 1 || inst->numDrones < 0)
+        return 0;
+    int nc = referencia->numMissoesCaminhao;
+    int nd = referencia->numMissoesDrone;
+    if (nc < 0 || nc > inst->n - 1 || nd != inst->n - 1 - nc ||
+        (nc > 0 && referencia->missaoCaminhao == NULL) ||
+        (nd > 0 && referencia->missaoDrone == NULL))
+        return 0;
+
+    Solucao base = {0}, candidata = {0};
+    /* A alocacao usa apenas n; a instancia original permanece constante. */
+    Instancia dimensoes = {.n = inst->n, .numDrones = inst->numDrones};
+    alocarSolucao(&dimensoes, &base);
+    alocarSolucao(&dimensoes, &candidata);
+    int sucesso = 0;
+    if (base.missaoCaminhao == NULL || base.missaoDrone == NULL ||
+        candidata.missaoCaminhao == NULL || candidata.missaoDrone == NULL || base.prefixosDrone == NULL || candidata.prefixosDrone == NULL)
+        goto finalizar;
+    base.numMissoesCaminhao = nc;
+    base.numMissoesDrone = nd;
+    for (int i = 0; i < nc; i++)
+        base.missaoCaminhao[i] = referencia->missaoCaminhao[i];
+    for (int i = 0; i < nd; i++)
+        base.missaoDrone[i] = referencia->missaoDrone[i];
+    if (!escalonarMissoesDrone(inst, &base) || !calcularMakespan(inst, &base))
+        goto finalizar;
+
+    double atual = parametros->tempInicial;
+    /* Limite defensivo para beta muito proximo de 1 e metas nao atingidas. */
+    const int maxNiveis = 10000;
+    for (int nivel = 0; nivel < maxNiveis; nivel++) {
+        int aceitos = 0;
+        for (int iteracao = 0; iteracao < parametros->saMax; iteracao++) {
+            /* Cada teste parte da mesma base; nunca se aceita um movimento nela. */
+            if (!gerarVizinhoAvaliado(inst, &base, &candidata))
+                goto finalizar;
+            double delta = candidata.makespan - base.makespan;
+            if (delta <= 0.0) {
+                aceitos++;
+            } else {
+                double sorteio = (double)rand() / ((double)RAND_MAX + 1.0);
+                if (sorteio < exp(-delta / atual))
+                    aceitos++;
+            }
+        }
+        if ((double)aceitos >= parametros->gamma * parametros->saMax) {
+            *temperatura = atual;
+            sucesso = 1;
+            break;
+        }
+        double proxima = atual * parametros->beta;
+        if (!isfinite(proxima) || proxima <= atual)
+            goto finalizar;
+        atual = proxima;
+    }
+
+finalizar:
+    liberarSolucao(&base);
+    liberarSolucao(&candidata);
+    return sucesso;
+}
+
+/* Os dois destinos sao previamente alocados para a mesma instancia. */
+static void copiarSolucao(const Instancia *inst, const Solucao *origem, Solucao *destino)
+{
+    (void)inst;
+    for (int i = 0; i < origem->numMissoesCaminhao; i++)
+        destino->missaoCaminhao[i] = origem->missaoCaminhao[i];
+    for (int i = 0; i < origem->numMissoesDrone; i++)
+        destino->missaoDrone[i] = origem->missaoDrone[i];
+    destino->numMissoesCaminhao = origem->numMissoesCaminhao;
+    destino->numMissoesDrone = origem->numMissoesDrone;
+    destino->makespan = origem->makespan;
+    destino->tempoCaminhao = origem->tempoCaminhao;
+    destino->tempoDrones = origem->tempoDrones;
+    destino->avaliacaoValida = origem->avaliacaoValida;
+    destino->cronogramaValido = origem->cronogramaValido;
+    destino->branchBoundAplicado = origem->branchBoundAplicado;
+    if (origem->prefixosDrone && destino->prefixosDrone)
+        memcpy(destino->prefixosDrone, origem->prefixosDrone,
+               ((size_t)origem->numMissoesDrone + 1) * sizeof(double));
+}
+
+static int mesmasDecisoesSA(const Solucao *a, const Solucao *b)
+{
+    if (a->numMissoesCaminhao != b->numMissoesCaminhao ||
+        a->numMissoesDrone != b->numMissoesDrone) return 0;
+    for (int i = 0; i < a->numMissoesCaminhao; i++)
+        if (a->missaoCaminhao[i].n != b->missaoCaminhao[i].n) return 0;
+    for (int i = 0; i < a->numMissoesDrone; i++)
+        if (a->missaoDrone[i].cliente != b->missaoDrone[i].cliente ||
+            a->missaoDrone[i].qtdDrones != b->missaoDrone[i].qtdDrones) return 0;
+    return 1;
+}
+
+static void ordenarEliteSA(Solucao melhores[NUM_MELHORES_SA], int quantidade);
+
+int atualizarMelhoresSolucoesSA(const Instancia *inst, const Solucao *candidata,
+                              Solucao melhores[NUM_MELHORES_SA], int *quantidade)
+{
+    if (inst == NULL || candidata == NULL || melhores == NULL || quantidade == NULL ||
+        *quantidade < 0 || *quantidade > NUM_MELHORES_SA ||
+        !candidata->avaliacaoValida || !isfinite(candidata->makespan)) return 0;
+    for (int i = 0; i < *quantidade; i++) {
+        if (!mesmasDecisoesSA(candidata, &melhores[i])) continue;
+        bool jaAplicado = melhores[i].branchBoundAplicado || candidata->branchBoundAplicado;
+        if (candidata->makespan < melhores[i].makespan) {
+            copiarSolucao(inst, candidata, &melhores[i]);
+            melhores[i].branchBoundAplicado = jaAplicado;
+            ordenarEliteSA(melhores, *quantidade);
+            return 1;
+        }
+        melhores[i].branchBoundAplicado = jaAplicado;
+        return 0;
+    }
+    int destino = *quantidade;
+    if (destino == NUM_MELHORES_SA) {
+        destino--;
+        if (candidata->makespan >= melhores[destino].makespan) return 0;
+    }
+    copiarSolucao(inst, candidata, &melhores[destino]);
+    if (*quantidade < NUM_MELHORES_SA) (*quantidade)++;
+    /* Troca a propriedade de buffers independentes para manter a ordem. */
+    while (destino > 0 && melhores[destino].makespan < melhores[destino - 1].makespan) {
+        Solucao auxiliar = melhores[destino - 1];
+        melhores[destino - 1] = melhores[destino];
+        melhores[destino] = auxiliar;
+        destino--;
+    }
+    return 1;
+}
+
+static void ordenarEliteSA(Solucao melhores[NUM_MELHORES_SA], int quantidade)
+{
+    for (int i = 1; i < quantidade; i++) {
+        int j = i;
+        while (j > 0 && melhores[j].makespan < melhores[j - 1].makespan) {
+            Solucao aux = melhores[j]; melhores[j] = melhores[j - 1]; melhores[j - 1] = aux;
+            j--;
+        }
+    }
+}
+
+struct EntradaHistoricoBBSA {
+    int quantidade;
+    MissaoDrone *missoes;
+    double tempo;
+    unsigned long long maxNos;
+    ResultadoBB resultado;
+};
+
+void liberarHistoricoBBSA(HistoricoBBSA *h)
+{
+    if(!h) return;
+    for(size_t i=0;i<h->quantidade;i++) free(h->entradas[i].missoes);
+    free(h->entradas); *h=(HistoricoBBSA){0};
+}
+
+static size_t localizarHistoricoBBSA(const HistoricoBBSA *h, const Solucao *s)
+{
+    for(size_t i=0;i<h->quantidade;i++) {
+        const struct EntradaHistoricoBBSA *e=&h->entradas[i];
+        if(e->quantidade!=s->numMissoesDrone) continue;
+        int j=0;
+        while(j<e->quantidade && e->missoes[j].cliente==s->missaoDrone[j].cliente) j++;
+        if(j==e->quantidade) return i;
+    }
+    return h->quantidade;
+}
+
+static bool repetirHistoricoBBSA(const struct EntradaHistoricoBBSA *e,
+                                const Solucao *s, unsigned long long maxNos)
+{
+    if(e->resultado.motivo==BB_OTIMO || e->tempo<=s->tempoCaminhao) return false;
+    /* Meta anterior deixou de bastar, ou existe maior orcamento disponivel. */
+    if(e->resultado.motivo==BB_META_ATINGIDA) return true;
+    return e->maxNos!=0 && (maxNos==0 || maxNos>e->maxNos);
+}
+
+static int guardarHistoricoBBSA(HistoricoBBSA *h, size_t indice, const Solucao *s,
+                               unsigned long long maxNos, ResultadoBB resultado)
+{
+    if(indice==h->quantidade) {
+        if(h->quantidade==h->capacidade) {
+            size_t capacidade=h->capacidade ? 2*h->capacidade : 16;
+            void *novas=realloc(h->entradas,capacidade*sizeof *h->entradas);
+            if(!novas) return 0;
+            h->entradas=novas; h->capacidade=capacidade;
+        }
+        MissaoDrone *missoes=malloc((size_t)s->numMissoesDrone*sizeof *missoes);
+        if(!missoes) return 0;
+        h->entradas[indice]=(struct EntradaHistoricoBBSA){.quantidade=s->numMissoesDrone,.missoes=missoes};
+        h->quantidade++;
+    }
+    struct EntradaHistoricoBBSA *e=&h->entradas[indice];
+    memcpy(e->missoes,s->missaoDrone,(size_t)s->numMissoesDrone*sizeof *e->missoes);
+    e->tempo=s->tempoDrones; e->maxNos=maxNos; e->resultado=resultado;
+    return 1;
+}
+
+static double secundarioSA(const Solucao *s) {return s->tempoCaminhao+s->tempoDrones;}
+
+static int distanciaAtribuicaoSA(const Instancia *inst, const Solucao *a, const Solucao *b)
+{
+    unsigned char mapa[inst->n]; memset(mapa,0,sizeof mapa);
+    for(int i=0;i<a->numMissoesDrone;i++) mapa[a->missaoDrone[i].cliente]^=1;
+    for(int i=0;i<b->numMissoesDrone;i++) mapa[b->missaoDrone[i].cliente]^=1;
+    int d=0; for(int i=1;i<inst->n;i++) d+=mapa[i]; return d;
+}
+
+static int atualizarEliteOpcoesSA(const Instancia *inst, const Solucao *c,
+                                  Solucao elite[NUM_MELHORES_SA], int *n, unsigned opcoes)
+{
+    if(!(opcoes&(SA_FOLGA|SA_DIVERSIDADE))) return atualizarMelhoresSolucoesSA(inst,c,elite,n);
+    if(!c->avaliacaoValida || !isfinite(c->makespan)) return 0;
+    bool folga=(opcoes&SA_FOLGA)!=0, diversa=(opcoes&SA_DIVERSIDADE)!=0;
+    int destino=-1;
+    for(int i=0;i<*n;i++) {
+        if(mesmasDecisoesSA(c,&elite[i])) {
+            elite[i].branchBoundAplicado|=c->branchBoundAplicado;return 0;
+        }
+        if(diversa && distanciaAtribuicaoSA(inst,c,&elite[i])==0) {
+            if(c->makespan<elite[i].makespan ||
+               (folga && c->makespan==elite[i].makespan && secundarioSA(c)<secundarioSA(&elite[i]))) destino=i;
+            else return 0;
+            break;
+        }
+    }
+    if(destino<0 && *n<NUM_MELHORES_SA) destino=(*n)++;
+    if(destino<0) {
+        int pior=*n-1;
+        if(c->makespan<elite[pior].makespan ||
+           (folga && c->makespan==elite[pior].makespan && secundarioSA(c)<secundarioSA(&elite[pior]))) destino=pior;
+        else if(diversa && c->makespan<=elite[0].makespan+2.0) {
+            int nova=inst->n, velha=inst->n, remover=-1;
+            for(int i=0;i<*n;i++) {
+                int d=distanciaAtribuicaoSA(inst,c,&elite[i]);if(d<nova) nova=d;
+                if(i) {
+                    int minimo=inst->n;
+                    for(int j=0;j<*n;j++) if(i!=j) {
+                        d=distanciaAtribuicaoSA(inst,&elite[i],&elite[j]);if(d<minimo) minimo=d;
+                    }
+                    if(minimo<=velha) {velha=minimo;remover=i;}
+                }
+            }
+            if(nova>velha) destino=remover;
+        }
+    }
+    if(destino<0) return 0;
+    copiarSolucao(inst,c,&elite[destino]); ordenarEliteSA(elite,*n);
+    if(folga) for(int i=1;i<*n;i++) for(int j=i;j>0 && elite[j].makespan==elite[j-1].makespan &&
+        secundarioSA(&elite[j])<secundarioSA(&elite[j-1]);j--) {
+        Solucao aux=elite[j];elite[j]=elite[j-1];elite[j-1]=aux;
+    }
+    return 1;
+}
+
+static int refinarEliteComOpcoesSA(const Instancia *inst, Solucao melhores[NUM_MELHORES_SA],
+                             int *quantidade, unsigned long long maxNos, HistoricoBBSA *h, unsigned opcoes)
+{
+    if(!inst || !melhores || !quantidade || !h || *quantidade<0 ||
+       *quantidade>NUM_MELHORES_SA || (h->inst && h->inst!=inst)) return -1;
+    h->inst=inst;
+    int elegiveis[NUM_MELHORES_SA], total=0;
+    for(int i=0;i<*quantidade;i++) {
+        Solucao *s=&melhores[i];
+        if(!s->avaliacaoValida || s->tempoDrones<=s->tempoCaminhao) continue;
+        size_t indice=localizarHistoricoBBSA(h,s);
+        bool repetir=indice<h->quantidade && repetirHistoricoBBSA(&h->entradas[indice],s,maxNos);
+        if(!s->branchBoundAplicado || repetir) elegiveis[total++]=i;
+    }
+    if(total==0) return 0;
+    int escolhido=elegiveis[rand()%total];
+    Solucao refinada={0}; Instancia dimensoes={.n=inst->n,.numDrones=inst->numDrones};
+    alocarSolucao(&dimensoes,&refinada);
+    int retorno=-1;
+    if(!refinada.missaoCaminhao || !refinada.missaoDrone || !refinada.prefixosDrone) goto finalizar;
+    copiarSolucao(inst,&melhores[escolhido],&refinada);
+    size_t indice=localizarHistoricoBBSA(h,&refinada);
+    bool executar=indice==h->quantidade;
+    if(!executar) {
+        const struct EntradaHistoricoBBSA *e=&h->entradas[indice];
+        executar=repetirHistoricoBBSA(e,&refinada,maxNos);
+        if(e->tempo<refinada.tempoDrones) {
+            memcpy(refinada.missaoDrone,e->missoes,(size_t)e->quantidade*sizeof *e->missoes);
+            if(!escalonarMissoesDrone(inst,&refinada) || !calcularMakespan(inst,&refinada)) goto finalizar;
+        }
+        h->reutilizacoes++;
+    }
+    if(executar) {
+        if((opcoes&SA_REPARO) && !repararCargaDrone(inst,&refinada)) goto finalizar;
+        ResultadoBB resultado;
+        double tempo=escalonarMissoesDroneBBMeta(inst,refinada.missaoDrone,refinada.numMissoesDrone,
+                                               maxNos,refinada.tempoCaminhao,&resultado);
+        if(!isfinite(tempo) || resultado.motivo==BB_ERRO ||
+           !escalonarMissoesDrone(inst,&refinada) || !calcularMakespan(inst,&refinada)) goto finalizar;
+        if(!guardarHistoricoBBSA(h,indice,&refinada,maxNos,resultado)) goto finalizar;
+        h->execucoes++;
+    }
+    refinada.branchBoundAplicado=true;
+    melhores[escolhido].branchBoundAplicado=true;
+    if(refinada.makespan<melhores[escolhido].makespan ||
+       ((opcoes&SA_FOLGA) && refinada.makespan==melhores[escolhido].makespan &&
+        secundarioSA(&refinada)<secundarioSA(&melhores[escolhido])))
+        copiarSolucao(inst,&refinada,&melhores[escolhido]);
+    ordenarEliteSA(melhores,*quantidade);
+    for(int i=0;i<*quantidade;i++) {
+        for(int j=i+1;j<*quantidade;) {
+            if(!mesmasDecisoesSA(&melhores[i],&melhores[j])) {j++;continue;}
+            melhores[i].branchBoundAplicado |= melhores[j].branchBoundAplicado;
+            Solucao aux=melhores[j];
+            for(int k=j;k<*quantidade-1;k++) melhores[k]=melhores[k+1];
+            melhores[--(*quantidade)]=aux;
+        }
+    }
+    retorno=1;
+finalizar:
+    liberarSolucao(&refinada); return retorno;
+}
+
+int refinarEliteComHistoricoSA(const Instancia *inst, Solucao melhores[NUM_MELHORES_SA],
+                             int *quantidade, unsigned long long maxNos, HistoricoBBSA *h) {
+    return refinarEliteComOpcoesSA(inst,melhores,quantidade,maxNos,h,0);
+}
+int refinarEliteAleatoriaSA(const Instancia *inst, Solucao melhores[NUM_MELHORES_SA],
+                           int *quantidade, unsigned long long maxNos)
+{
+    HistoricoBBSA historico={0};
+    int retorno=refinarEliteComHistoricoSA(inst,melhores,quantidade,maxNos,&historico);
+    liberarHistoricoBBSA(&historico); return retorno;
+}
+
+static int existeMovimento(const Instancia *inst, const Solucao *solucao)
+{
+    if (solucao->numMissoesCaminhao >= 2 || solucao->numMissoesDrone > 0)
+        return 1;
+    if (solucao->numMissoesCaminhao == 0 || inst->clientes == NULL ||
+        inst->tempoDrone == NULL)
+        return 0;
+    int cliente = solucao->missaoCaminhao[0].n;
+    int k = inst->clientes[cliente].minDrones;
+    return inst->clientes[cliente].elegivelDrone && k >= 1 &&
+        k <= inst->numDrones && inst->tempoDrone[cliente] != NULL &&
+        isfinite(inst->tempoDrone[cliente][k]) && inst->tempoDrone[cliente][k] >= 0.0;
+}
+
+int simulatedAnnealing(const Instancia *inst, Solucao *solucao, const ParametrosSA *parametros){
+
+    if (!validarParametrosSA(parametros) || inst == NULL || solucao == NULL || inst->n < 1 || inst->numDrones < 0 || solucao->missaoCaminhao == NULL || solucao->missaoDrone == NULL)
+        return 0;
+
+    int nc = solucao->numMissoesCaminhao, nd = solucao->numMissoesDrone;
+    
+    if (nc < 0 || nc > inst->n - 1 || nd != inst->n - 1 - nc)
+        return 0;
+
+    /* Atual, candidata e quatro melhores com buffers independentes. */
+    Solucao atual = {0}, candidata = {0};
+    Solucao melhores[NUM_MELHORES_SA] = {0};
+    int quantidadeMelhores = 0;
+    HistoricoBBSA historicoBB = {0};
+    
+    Instancia dimensoes = {.n = inst->n, .numDrones = inst->numDrones};
+    
+    alocarSolucao(&dimensoes, &atual);
+
+    alocarSolucao(&dimensoes, &candidata);
+    
+    for (int i = 0; i < NUM_MELHORES_SA; i++)
+        alocarSolucao(&dimensoes, &melhores[i]);
+    
+    int sucesso = 0;
+    
+    if (atual.missaoCaminhao == NULL || atual.missaoDrone == NULL || candidata.missaoCaminhao == NULL || candidata.missaoDrone == NULL || atual.prefixosDrone == NULL || candidata.prefixosDrone == NULL){
+        goto finalizar;
+    }
+    for (int i = 0; i < NUM_MELHORES_SA; i++)
+        if (melhores[i].missaoCaminhao == NULL || melhores[i].missaoDrone == NULL ||
+            melhores[i].prefixosDrone == NULL) goto finalizar;
+    copiarSolucao(inst, solucao, &atual);
+    
+    if (!escalonarMissoesDrone(inst, &atual) || !calcularMakespan(inst, &atual)){
+        goto finalizar;
+    }
+    atualizarEliteOpcoesSA(inst, &atual, melhores, &quantidadeMelhores,parametros->melhorias);
+    
+    double temperatura = parametros->tempInicial;
+    PesosMovimentosSA pesos = inicializarPesosMovimentosSA();
+    int niveisSemMelhora = 0, estagnacao=0, niveis=0, reinicios=0;
+    unsigned long long avaliacoes=0;
+    clock_t inicioBusca=clock();
+    bool esgotado=false;
+    
+    //enquanto a temperatura for maior do que a final e existir movimento
+    while ((parametros->maxSegundos>0 || parametros->maxAvaliacoes>0 || temperatura>parametros->tempFinal) && !esgotado && existeMovimento(inst, &atual)) {
+        double melhorInicioNivel = melhores[0].makespan;
+        
+        //Dentro do SAmax
+        for (int iteracao = 0; iteracao < parametros->saMax; iteracao++) {
+            
+            //Aqui eu gero vizinho, escalono essa mudança e calculo o makespan
+            if((parametros->maxAvaliacoes && avaliacoes>=parametros->maxAvaliacoes) ||
+               (parametros->maxSegundos>0 && avaliacoes%64==0 &&
+                (double)(clock()-inicioBusca)/CLOCKS_PER_SEC>=parametros->maxSegundos)) {esgotado=true;break;}
+            TipoMovimento movimento;
+            if (!gerarVizinhoAvaliadoConfigurado(inst, &atual, &candidata,
+                    parametros->pesosAdaptativos ? pesos.pesos : NULL, &movimento,(parametros->melhorias&SA_GRUPOS)!=0))
+                goto finalizar;
+
+            avaliacoes++;
+            double delta = candidata.makespan - atual.makespan;
+            
+            int aceitar = delta <= 0.0;
+            
+            if (!aceitar) {
+                double sorteio = (double)rand() / ((double)RAND_MAX + 1.0);
+                aceitar = sorteio < exp(-delta / temperatura);
+            }
+            if (parametros->pesosAdaptativos) {
+                pesos.tentativas[movimento]++;
+                if (aceitar && candidata.makespan < melhores[0].makespan)
+                    pesos.pontos[movimento] += 5.0;
+                else if (delta < 0.0)
+                    pesos.pontos[movimento] += 3.0;
+                else if(aceitar && delta==0.0 && (parametros->melhorias&SA_FOLGA) &&
+                        secundarioSA(&candidata)<secundarioSA(&atual) && candidata.makespan<=melhores[0].makespan)
+                    pesos.pontos[movimento] += 0.5;
+                else if (aceitar && delta > 0.0)
+                    pesos.pontos[movimento] += 1.0;
+            }
+            /* Guarda candidatas boas mesmo quando o SA rejeita a transicao. */
+            atualizarEliteOpcoesSA(inst, &candidata, melhores, &quantidadeMelhores,parametros->melhorias);
+            if (aceitar) {
+                /* Troca apenas a propriedade dos buffers internos, sem copia rasa
+                 * entre a solucao do chamador e as solucoes de trabalho. */
+                Solucao auxiliar = atual;
+                atual = candidata;
+                candidata = auxiliar;
+            }
+        }
+
+        niveis++;
+        if(!esgotado && (parametros->melhorias&SA_REPARO) && niveis%10==0) {
+            if(!repararCargaDrone(inst,&atual)) goto finalizar;
+            atualizarEliteOpcoesSA(inst,&atual,melhores,&quantidadeMelhores,parametros->melhorias);
+        }
+        if(melhores[0].makespan<melhorInicioNivel) estagnacao=0; else estagnacao++;
+        if(!esgotado && (parametros->melhorias&SA_REINICIOS) && estagnacao>=80 && reinicios<3) {
+            copiarSolucao(inst,&melhores[rand()%quantidadeMelhores],&atual);
+            for(int q=0;q<8;q++) {
+                if(!gerarVizinhoAvaliadoConfigurado(inst,&atual,&candidata,NULL,NULL,true)) goto finalizar;
+                Solucao aux=atual;atual=candidata;candidata=aux;
+                avaliacoes++;
+            }
+            temperatura=fmax(temperatura,parametros->tempInicial*0.02);
+            estagnacao=0;reinicios++;
+        }
+        if (melhores[0].makespan < melhorInicioNivel) niveisSemMelhora = 0;
+        else niveisSemMelhora++;
+        if (!esgotado && parametros->bbPeriodico && niveisSemMelhora >= parametros->niveisSemMelhoraBB) {
+            double antes = melhores[0].makespan;
+            int refinou = refinarEliteComOpcoesSA(inst, melhores, &quantidadeMelhores,
+                                                parametros->maxNosBB, &historicoBB,parametros->melhorias);
+            if (refinou < 0) goto finalizar;
+            if (refinou && (melhores[0].makespan < antes || ((parametros->melhorias&SA_FOLGA) && melhores[0].makespan==antes && melhores[0].makespan==atual.makespan && secundarioSA(&melhores[0])<secundarioSA(&atual))))
+                copiarSolucao(inst, &melhores[0], &atual);
+            niveisSemMelhora = 0;
+        }
+        if (parametros->pesosAdaptativos) atualizarPesosMovimentosSA(&pesos, parametros);
+        double proxima = temperatura * parametros->alpha;
+        
+        if (proxima >= temperatura)
+            goto finalizar;
+        
+        temperatura = fmax(proxima,parametros->tempFinal*0.5);
+    }
+    /* Uma verificacao completa ao final tambem elimina deriva numerica dos deltas. */
+    if (!calcularMakespan(inst, &melhores[0])) goto finalizar;
+    copiarSolucao(inst, &melhores[0], solucao);
+    sucesso = 1;
+
+finalizar:
+    liberarSolucao(&atual);
+    liberarSolucao(&candidata);
+    for (int i = 0; i < NUM_MELHORES_SA; i++) liberarSolucao(&melhores[i]);
+    liberarHistoricoBBSA(&historicoBB);
+    return sucesso;
+}

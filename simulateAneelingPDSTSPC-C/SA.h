@@ -4,6 +4,16 @@
 #include "cv.h"
 #include <stddef.h>
 
+typedef struct EstatisticasSA {
+    unsigned long long avaliacoes, trocas, reconstrucoes, retomadas;
+    unsigned long long trocasAceitas, reconstrucoesAceitas, melhoriasMacro;
+    unsigned long long retomadasDeOutraAtribuicao;
+    int atribuicoesElite;
+    bool terminouPorTempo;
+    double segundosCalibracao, segundosBusca, temperaturaInicial, temperaturaFinal;
+    MetricasReparoCV reparo;
+} EstatisticasSA;
+
 typedef struct ParametrosSA {
     double alpha;       /* Resfriamento: 0 < alpha < 1. */
     double beta;        /* Aquecimento da calibracao: beta > 1. */
@@ -17,7 +27,34 @@ typedef struct ParametrosSA {
     bool bbPeriodico;
     int niveisSemMelhoraBB; /* Disparo apos este numero de niveis sem melhora. */
     unsigned long long maxNosBB; /* Orcamento por chamada periodica. */
+    bool movimentosGrupo; /* Transferencias conjuntas; false restaura o SA anterior. */
+    bool trocasSimultaneas, reconstrucaoParcial;
+    double probTroca, probReconstrucao; /* Soma <= 0.25; preserva movimentos locais. */
+    double fracaoMinima, fracaoMaxima; /* Destruicao: 0 < min <= max <= 1. */
+    bool calibracaoMista; /* Aceitacao media dos deltas positivos em estados mistos. */
+    bool resfriamentoPorTempo; /* Com limite positivo, chega a tempFinal no prazo. */
+    bool elitesDiversas;
+    double folgaElite; /* Tolerancia relativa dos slots de diversidade ao melhor. */
+    int niveisSemMelhoraRetomada;
+    int maxRetomadas; /* 0 desliga; >0 limita retomadas quando nao ha prazo. */
+    double reaquecimento; /* Fracao de T0 nas retomadas. */
+    double limiteSegundos; /* Parede; 0 encerra pelo resfriamento. */
+    bool reparoDirigido, cadeiasEjecao, filtrosReparo, reparoCP;
+    int niveisSemMelhoraReparo, larguraCadeia, profundidadeCadeia;
+    int clientesLivresCP, maxChamadasCP;
+    double segundosReparo, segundosCP, fracaoTempoCP;
+    const char *pythonCP, *scriptCP;
+    EstatisticasSA *estatisticas; /* Opcional; nao compartilha entre execucoes. */
 } ParametrosSA;
+
+/* Configuracao das propostas 1, 2, 6 e 7; padrao antigo continua disponivel.
+ * Usa 30 s por execucao, incluindo calibracao via resolverComCalibracaoSA. */
+ParametrosSA parametrosSAExploracao(void);
+/* Exploração mais reparos 1/2/4/5, ativados pela main somente na 165-r-c. */
+ParametrosSA parametrosSAFoco165(void);
+double relogioSA(void);
+int resolverComCalibracaoSA(const Instancia *inst, Solucao *solucao,
+                          const ParametrosSA *parametros, double *temperatura);
 
 typedef struct PesosMovimentosSA {
     double pesos[NUM_MOVIMENTOS];
@@ -36,7 +73,8 @@ void atualizarPesosMovimentosSA(PesosMovimentosSA *estado, const ParametrosSA *p
  * Valores iniciais ajustaveis para os demais: alpha=0.99,
  * tempInicial=10.0 e tempFinal=0.01, na escala do makespan em minutos.
  * Pesos adaptativos ativos, taxaAdaptacao=0.2 e pesoMinimo=0.1.
- * BB periodico ativo apos 5 niveis sem melhora, com ate 10000 nos por chamada. */
+ * BB periodico ativo apos 5 niveis sem melhora, com ate 10000 nos por chamada.
+ * Grupos sao opcionais (false); a main ativa nas quatro instancias selecionadas. */
 ParametrosSA parametrosSAPadrao(void);
 
 /* Retorna 1 somente se todos os parametros forem finitos e validos. */
@@ -45,7 +83,9 @@ int validarParametrosSA(const ParametrosSA *parametros);
 /* A calibracao testa vizinhos sem modificar a solucao de referencia;
  * aumenta a temperatura por beta ate atingir gamma de aceitacao.
  * Reconstroi e avalia uma copia da referencia antes dos testes.
- * Usa selecao uniforme, sem aprender ou alterar pesos.
+ * Com calibracaoMista=false, conserva o gerador e criterio legados.
+ * Com calibracaoMista=true, caminha numa copia, usa os operadores ativos e
+ * calcula T pela aceitacao media de deltas positivos, sem aprender pesos.
  * Retorna 1 e escreve temperatura somente no sucesso; 0 na falha, inclusive
  * ausencia de movimentos, erro de avaliacao, overflow ou limite de 10000 niveis.
  * Inicializar srand uma unica vez no chamador. */
@@ -61,6 +101,13 @@ enum { NUM_MELHORES_SA = 4 };
  * Retorna 1 se inseriu; 0 caso contrario. Requer candidata avaliada e viavel. */
 int atualizarMelhoresSolucoesSA(const Instancia *inst, const Solucao *candidata,
                               Solucao melhores[NUM_MELHORES_SA], int *quantidade);
+
+/* Preserva o melhor absoluto e ate tres atribuicoes distintas dentro da folga.
+ * A diversidade considera clientes por recurso, nao permutacoes de uma rota. */
+int atualizarEliteDiversaSA(const Instancia *inst, const Solucao *candidata,
+                          Solucao melhores[NUM_MELHORES_SA], int *quantidade,
+                          double folgaRelativa);
+int distanciaAtribuicaoSA(const Instancia *inst, const Solucao *a, const Solucao *b);
 
 /* Historico pertence a uma instancia imutavel e a uma execucao. Inicializar
  * com {0}; liberar ao final. Chave: sequencia de clientes dos drones, sem
@@ -95,8 +142,14 @@ int refinarEliteAleatoriaSA(const Instancia *inst, Solucao melhores[NUM_MELHORES
  * A semente aleatoria deve ser inicializada uma unica vez pelo chamador.
  * Retorna 1 no sucesso (inclusive sem movimentos); 0 na falha, preservando
  * a solucao do chamador. Reconstroi a avaliacao inicial numa copia.
- * Mantem quatro melhores solucoes distintas durante a busca, considerando
- * todas as candidatas avaliadas; retorna a melhor delas em solucao.
+ * Mantem ate quatro solucoes durante a busca; retorna a melhor em solucao.
+ * elitesDiversas=false conserva o arquivo original de melhores makespans;
+ * true preserva o melhor e atribuicoes distintas dentro de folgaElite.
+ * Apos estagnacao, retoma de uma elite sorteada, preferindo outra atribuicao;
+ * reconstrui quando habilitado e reaquece sem alterar o melhor guardado.
+ * limiteSegundos positivo mede a busca desta interface. Para incluir tambem
+ * calibracao, usar resolverComCalibracaoSA. O limite e verificado entre
+ * operacoes: um reparo em andamento pode exceder o prazo pelo seu custo.
  * Apos niveisSemMelhoraBB niveis sem melhora global, sorteia uma elite com
  * tempoDrones > tempoCaminhao e ainda elegivel para refinamento/reuso.
  * O historico evita repetir buscas para a mesma sequencia; tentativas limitadas

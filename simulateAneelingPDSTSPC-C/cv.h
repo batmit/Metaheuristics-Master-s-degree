@@ -7,6 +7,13 @@ typedef enum TipoMovimento {
     TROCAR_CAMINHAO, TROCAR_DRONES, PARA_DRONES, PARA_CAMINHAO,
     ALTERAR_QUANTIDADE_DRONES, REINSERIR_CAMINHAO, DOIS_OPT_CAMINHAO, NUM_MOVIMENTOS
 } TipoMovimento;
+/* Quando grupos=true, 1/4 das transferencias tenta mover clientes da mesma
+ * coordenada ou 2 a 4 clientes proximos. Os movimentos individuais continuam
+ * disponiveis; quantidades sao sorteadas entre as viaveis. A atual nao muda.
+ * O grupo usa avaliacao da rota alterada e reconstroi o cronograma dos drones. */
+int gerarVizinhoAvaliadoConfigurado(const Instancia *inst, const Solucao *atual,
+                                   Solucao *vizinho, const double *pesos,
+                                   TipoMovimento *tipo, bool grupos);
 void construirMatrizCaminhao(Instancia *inst);
 
 void alocarTempoDrone(Instancia *inst);
@@ -18,6 +25,45 @@ void alocarInstancias(Instancia *inst);
 void alocarSolucao(Instancia *inst, Solucao *solucao);
 
 void liberarSolucao(Solucao *solucao);
+
+/* Macromovimentos avaliados somente apos reconstruir a cobertura completa.
+ * Entrada avaliada; saida com buffers independentes. Nao alteram a entrada.
+ * Troca transfere clientes nos dois sentidos quando ambos estao disponiveis;
+ * sem essa possibilidade, devolve copia avaliada (nao inventa uma transferencia).
+ * Reconstrucao remove uma fracao sorteada e reinsere em ambos os recursos,
+ * testando todas as quantidades viaveis e tres prioridades de insercao.
+ * Retornam 0 em dados invalidos ou falha de memoria/avaliacao. */
+int trocarRecursosCV(const Instancia *inst, const Solucao *atual, Solucao *vizinho);
+int reconstruirParcialCV(const Instancia *inst, const Solucao *atual, Solucao *vizinho,
+                        double fracaoMinima, double fracaoMaxima);
+
+typedef struct MetricasReparoCV {
+    unsigned long long propostas, podasCarga, podasRota, avaliacoes, melhorias;
+    unsigned long long chamadasCP, sucessosCP, inviaveisCP, limitesCP, errosCP;
+    double segundosNativo, segundosCP;
+} MetricasReparoCV;
+
+/* As metas sao usadas apenas no reparo aspiracional, nunca para proibir
+ * estados intermediarios do SA. A discretizacao e verificada nos dados. */
+int metasReparoCV(const Instancia *inst, double melhorGlobal,
+                  double *horizonte, double *limiteCaminhao);
+double limiteCargaReparoCV(const Instancia *inst, const Solucao *s);
+double limiteRotaReparoCV(const Instancia *inst, const Solucao *s);
+int selecionarLivresReparoCV(const Instancia *inst, const Solucao *s,
+                            int *clientes, int capacidade);
+/* Retornos: 1 melhora completa, 0 sem melhora/fora de suporte, -1 erro.
+ * entrada e saida precisam ter buffers independentes. Preserva entrada. */
+int repararComMetaCV(const Instancia *inst, const Solucao *entrada,
+                    double melhorGlobal, Solucao *saida, bool cadeias, bool filtros,
+                    int largura, int profundidade, double segundos,
+                    MetricasReparoCV *metricas);
+/* Processo isolado com prazo de parede, incluindo inicializacao Python.
+ * O certificado CP e preservado e revalidado; nao e reagendado first-fit.
+ * Resultado -1 em dependencias/protocolo invalidos, 0 sem certificado. */
+int repararCPSATCV(const Instancia *inst, const Solucao *entrada,
+                  double melhorGlobal, Solucao *saida, int livres, double segundos,
+                  unsigned seed, const char *python, const char *script,
+                  MetricasReparoCV *metricas);
 
 /* Requer solucao previamente alocada por alocarSolucao para esta instancia.
  * Constroi rota por vizinho mais proximo e melhora por 2-opt, sem missoes
@@ -39,7 +85,7 @@ int gerarVizinho(const Instancia *inst, const Solucao *atual, Solucao *vizinho);
  * Atualiza apenas as arestas afetadas e reescala o sufixo de drones alterado.
  * Retorna vizinho com makespan pronto; nao exige avaliacao completa adicional.
  * Falha de avaliacao deixa o vizinho invalidado. A atual permanece intacta.
- * Aceita cronogramas de BB sem cache de prefixos: mudancas apenas na rota
+ * Aceita cronogramas de BB/CP sem cache de prefixos: mudancas apenas na rota
  * preservam os horarios; mudancas nos drones reconstroem o cronograma completo. */
 int gerarVizinhoAvaliado(const Instancia *inst, const Solucao *atual, Solucao *vizinho);
 

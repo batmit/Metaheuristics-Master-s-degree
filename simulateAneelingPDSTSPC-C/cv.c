@@ -1,3 +1,6 @@
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include <stdio.h>
 #include "cv.h"
 #include "main.h"
@@ -25,6 +28,7 @@ void alocarSolucao(Instancia *inst, Solucao *solucao){
     solucao->tempoCaminhao = solucao->tempoDrones = INFINITY;
     solucao->prefixosDrone = calloc((size_t)inst->n, sizeof(double));
     solucao->cronogramaValido = solucao->avaliacaoValida = false;
+    solucao->cronogramaExterno = false;
     solucao->branchBoundAplicado = false;
 
 }
@@ -152,6 +156,7 @@ int construirSolucaoInicial(const Instancia *inst, Solucao *solucao)
     solucao->makespan = INFINITY;
     solucao->branchBoundAplicado = false;
     solucao->cronogramaValido = false;
+    solucao->cronogramaExterno = false;
     solucao->numMissoesCaminhao = 0;
     solucao->numMissoesDrone = 0;
 
@@ -251,9 +256,96 @@ static double arestaRota(const Instancia *inst, const Solucao *s, int p){
     return tempoTrecho(inst, a, b);
 }
 
+/* Movimentos conjuntos: a ordem dos drones restantes e preservada. */
+static double custoRotaMelhoria(const Instancia *inst, const Solucao *s)
+{
+    double valor=0.0; int anterior=0;
+    for(int i=0;i<s->numMissoesCaminhao;i++) {
+        int j=s->missaoCaminhao[i].n;
+        valor+=tempoTrecho(inst,anterior,j); anterior=j;
+    }
+    return valor+tempoTrecho(inst,anterior,0);
+}
+
+static int moverGrupoMelhoria(const Instancia *inst, Solucao *s, bool paraDrones)
+{
+    int nc=s->numMissoesCaminhao, nd=s->numMissoesDrone;
+    int tamanho=paraDrones?nc:nd;
+    if(tamanho<2 || !inst->clientes) return 0;
+    int *selecionados=calloc((size_t)inst->n,sizeof *selecionados);
+    if(!selecionados) return -1;
+    int ancora=-1, contagem=0;
+    /* Sorteio uniforme entre as ancoras viaveis. */
+    for(int i=0;i<tamanho;i++) {
+        int j=paraDrones?s->missaoCaminhao[i].n:s->missaoDrone[i].cliente;
+        if(!paraDrones || clientePodeUsarDrone(inst,j)) {
+            contagem++; if(rand()%contagem==0) ancora=j;
+        }
+    }
+    if(ancora<0 || contagem<2) {free(selecionados); return 0;}
+    int qtd=0;
+    bool localCompleto=true;
+    /* Grupo inteiro da mesma coordenada, se todos forem elegiveis. */
+    for(int i=0;i<tamanho;i++) {
+        int j=paraDrones?s->missaoCaminhao[i].n:s->missaoDrone[i].cliente;
+        if(inst->clientes[j].x==inst->clientes[ancora].x &&
+           inst->clientes[j].y==inst->clientes[ancora].y) {
+            if(paraDrones && !clientePodeUsarDrone(inst,j)) {localCompleto=false; break;}
+            selecionados[j]=1; qtd++;
+        }
+    }
+    if(!localCompleto || qtd<2 || rand()%4==0) {
+        memset(selecionados,0,(size_t)inst->n*sizeof *selecionados);
+        selecionados[ancora]=1; qtd=1;
+        int alvo=2+rand()%3; if(alvo>contagem) alvo=contagem;
+        while(qtd<alvo) {
+            int proximo=-1; double distancia=INFINITY;
+            for(int i=0;i<tamanho;i++) {
+                int j=paraDrones?s->missaoCaminhao[i].n:s->missaoDrone[i].cliente;
+                if(selecionados[j] || (paraDrones && !clientePodeUsarDrone(inst,j))) continue;
+                double d=fabs(inst->clientes[j].x-inst->clientes[ancora].x)+
+                         fabs(inst->clientes[j].y-inst->clientes[ancora].y);
+                if(d<distancia || (d==distancia && rand()%2)) {proximo=j;distancia=d;}
+            }
+            if(proximo<0) break;
+            selecionados[proximo]=1; qtd++;
+        }
+    }
+    if(paraDrones) {
+        int saida=0, destino=rand()%(nd+1);
+        memmove(s->missaoDrone+destino+qtd,s->missaoDrone+destino,(size_t)(nd-destino)*sizeof *s->missaoDrone);
+        int pos=destino;
+        for(int i=0;i<nc;i++) {
+            int j=s->missaoCaminhao[i].n;
+            if(selecionados[j]) s->missaoDrone[pos++]=(MissaoDrone){j,quantidadeDroneAlternativa(inst,j,0,true),0,0};
+            else s->missaoCaminhao[saida++]=s->missaoCaminhao[i];
+        }
+        s->numMissoesCaminhao=saida; s->numMissoesDrone=nd+qtd;
+    } else {
+        int saida=0;
+        for(int i=0;i<nd;i++) {
+            int j=s->missaoDrone[i].cliente;
+            if(!selecionados[j]) {s->missaoDrone[saida++]=s->missaoDrone[i];continue;}
+            /* Melhor insercao, sorteando empates. */
+            int destino=0, empates=0; double menor=INFINITY;
+            for(int p=0;p<=nc;p++) {
+                int a=p?s->missaoCaminhao[p-1].n:0;
+                int b=p<nc?s->missaoCaminhao[p].n:0;
+                double delta=tempoTrecho(inst,a,j)+tempoTrecho(inst,j,b)-(nc?tempoTrecho(inst,a,b):0.0);
+                if(delta<menor) {menor=delta;destino=p;empates=1;}
+                else if(delta==menor && rand()%++empates==0) destino=p;
+            }
+            memmove(s->missaoCaminhao+destino+1,s->missaoCaminhao+destino,(size_t)(nc-destino)*sizeof *s->missaoCaminhao);
+            s->missaoCaminhao[destino].n=j; nc++;
+        }
+        s->numMissoesCaminhao=nc; s->numMissoesDrone=saida;
+    }
+    free(selecionados); return 1;
+}
+
 static int gerarVizinhoInterno(const Instancia *inst, const Solucao *atual,
                               Solucao *vizinho, AlteracaoVizinho *alteracao,
-                              const double *pesos, TipoMovimento *tipo){
+                              const double *pesos, TipoMovimento *tipo, bool grupos){
 
     if (inst == NULL || atual == NULL || vizinho == NULL || atual == vizinho ||
         inst->n < 1 || inst->numDrones < 0)
@@ -347,7 +439,15 @@ static int gerarVizinhoInterno(const Instancia *inst, const Solucao *atual,
         }
     }
 
-    if (movimento == TROCAR_CAMINHAO || movimento == TROCAR_DRONES) {
+    int grupo=0;
+    if(grupos && (movimento==PARA_DRONES || movimento==PARA_CAMINHAO) && rand()%4==0) {
+        grupo=moverGrupoMelhoria(inst,vizinho,movimento==PARA_DRONES);
+        if(grupo<0) return 0;
+    }
+    if(grupo) {
+        nc=vizinho->numMissoesCaminhao; nd=vizinho->numMissoesDrone;
+        if(alteracao) {alteracao->primeiraDrone=0;alteracao->deltaCaminhao=custoRotaMelhoria(inst,vizinho)-atual->tempoCaminhao;}
+    } else if (movimento == TROCAR_CAMINHAO || movimento == TROCAR_DRONES) {
 
         //pego o tamanho
         int tamanho = movimento == TROCAR_CAMINHAO ? nc : nd;
@@ -464,6 +564,9 @@ static int gerarVizinhoInterno(const Instancia *inst, const Solucao *atual,
     vizinho->branchBoundAplicado = atual->branchBoundAplicado &&
         (movimento == TROCAR_CAMINHAO || movimento == REINSERIR_CAMINHAO ||
          movimento == DOIS_OPT_CAMINHAO);
+    vizinho->cronogramaExterno = atual->cronogramaExterno &&
+        (movimento == TROCAR_CAMINHAO || movimento == REINSERIR_CAMINHAO ||
+         movimento == DOIS_OPT_CAMINHAO);
 
     //Depois vamos apenas salvar os dados, até porque foi alterado o vetor dos drones
     //O escalonamento será feito posteriormente
@@ -481,7 +584,7 @@ static int gerarVizinhoInterno(const Instancia *inst, const Solucao *atual,
 }
 
 int gerarVizinho(const Instancia *inst, const Solucao *atual, Solucao *vizinho){
-    return gerarVizinhoInterno(inst, atual, vizinho, NULL, NULL, NULL);
+    return gerarVizinhoInterno(inst, atual, vizinho, NULL, NULL, NULL, false);
 }
 
 /* Perfil de ocupacao: eventos ordenados; retornos e partidas no mesmo
@@ -534,7 +637,7 @@ static int escalonarDesde(const Instancia *inst, Solucao *solucao,
     if (solucao == NULL)
         return 0;
     solucao->makespan = INFINITY;
-    solucao->avaliacaoValida = solucao->cronogramaValido = false;
+    solucao->avaliacaoValida = solucao->cronogramaValido = solucao->cronogramaExterno = false;
     solucao->branchBoundAplicado = false;
     
     if (inst == NULL || inst->n < 1 || inst->numDrones < 0 ||
@@ -818,15 +921,15 @@ double escalonarMissoesDroneBB(const Instancia *inst, MissaoDrone *missoes, int 
     return escalonarMissoesDroneBBMeta(inst,missoes,quantidade,0,-1.0,NULL);
 }
 
-int gerarVizinhoAvaliadoPonderado(const Instancia *inst, const Solucao *atual,
+int gerarVizinhoAvaliadoConfigurado(const Instancia *inst, const Solucao *atual,
                                 Solucao *vizinho, const double pesos[NUM_MOVIMENTOS],
-                                TipoMovimento *tipo){
+                                TipoMovimento *tipo, bool grupos){
     if (inst == NULL || atual == NULL || vizinho == NULL ||
-        !atual->avaliacaoValida || (!atual->cronogramaValido && !atual->branchBoundAplicado) ||
+        !atual->avaliacaoValida || (!atual->cronogramaValido && !atual->branchBoundAplicado && !atual->cronogramaExterno) ||
         atual->prefixosDrone == NULL || vizinho->prefixosDrone == NULL)
         return 0;
     AlteracaoVizinho alteracao;
-    if (!gerarVizinhoInterno(inst, atual, vizinho, &alteracao, pesos, tipo)) return 0;
+    if (!gerarVizinhoInterno(inst, atual, vizinho, &alteracao, pesos, tipo, grupos)) return 0;
     if (alteracao.primeiraDrone == atual->numMissoesDrone &&
         vizinho->numMissoesDrone == atual->numMissoesDrone) {
         /* Apenas a rota mudou: preserva todo o cronograma e seu estado. */
@@ -845,6 +948,10 @@ int gerarVizinhoAvaliadoPonderado(const Instancia *inst, const Solucao *atual,
     return 1;
 }
 
+int gerarVizinhoAvaliadoPonderado(const Instancia *inst, const Solucao *atual,
+                                Solucao *vizinho, const double *pesos, TipoMovimento *tipo){
+    return gerarVizinhoAvaliadoConfigurado(inst,atual,vizinho,pesos,tipo,false);
+}
 int gerarVizinhoAvaliado(const Instancia *inst, const Solucao *atual, Solucao *vizinho){
     return gerarVizinhoAvaliadoPonderado(inst, atual, vizinho, NULL, NULL);
 }
@@ -949,4 +1056,276 @@ invalida:
     free(visitado);
     return 0;
 }
+
+/* Reconstrucoes trabalham com cobertura parcial apenas nestas funcoes privadas.
+ * Nenhuma solucao parcial e publicada ao SA ou passada a calcularMakespan. */
+static void copiarDecisoesCV(const Solucao *a, Solucao *b)
+{
+    b->numMissoesCaminhao=a->numMissoesCaminhao;
+    b->numMissoesDrone=a->numMissoesDrone;
+    memcpy(b->missaoCaminhao,a->missaoCaminhao,(size_t)a->numMissoesCaminhao*sizeof(Missao));
+    memcpy(b->missaoDrone,a->missaoDrone,(size_t)a->numMissoesDrone*sizeof(MissaoDrone));
+    b->avaliacaoValida=b->cronogramaValido=b->branchBoundAplicado=false;
+    b->cronogramaExterno=false;
+}
+
+static int avaliarParcialCV(const Instancia *inst, Solucao *s)
+{
+    if(!escalonarMissoesDrone(inst,s)) return 0;
+    s->tempoCaminhao=custoRotaMelhoria(inst,s);
+    s->makespan=fmax(s->tempoCaminhao,s->tempoDrones);
+    return isfinite(s->makespan);
+}
+
+static double cargaMinimaClienteCV(const Instancia *inst,int j)
+{
+    double menor=INFINITY;
+    if(clientePodeUsarDrone(inst,j))
+        for(int k=inst->clientes[j].minDrones;k<=inst->numDrones;k++) {
+            double t=inst->tempoDrone[j][k];
+            if(isfinite(t) && t>=0) menor=fmin(menor,k*t);
+        }
+    return menor;
+}
+
+static int melhorPosicaoCaminhaoCV(const Instancia *inst,const Solucao *s,int j,double *delta)
+{
+    int pos=0,empates=0; *delta=INFINITY;
+    for(int p=0;p<=s->numMissoesCaminhao;p++) {
+        int a=p?s->missaoCaminhao[p-1].n:0;
+        int b=p<s->numMissoesCaminhao?s->missaoCaminhao[p].n:0;
+        double d=tempoTrecho(inst,a,j)+tempoTrecho(inst,j,b)-tempoTrecho(inst,a,b);
+        if(d<*delta-1e-9) {*delta=d;pos=p;empates=1;}
+        else if(fabs(d-*delta)<1e-9 && rand()%++empates==0) pos=p;
+    }
+    return pos;
+}
+
+static void inserirCaminhaoCV(Solucao *s,int j,int pos)
+{
+    memmove(s->missaoCaminhao+pos+1,s->missaoCaminhao+pos,
+            (size_t)(s->numMissoesCaminhao-pos)*sizeof(Missao));
+    s->missaoCaminhao[pos].n=j; s->numMissoesCaminhao++;
+}
+
+static int menorCargaKCV(const Instancia *inst,int j)
+{
+    int escolhido=0;double menor=INFINITY;
+    for(int k=inst->clientes[j].minDrones;k<=inst->numDrones;k++) {
+        double t=inst->tempoDrone[j][k];
+        if(isfinite(t) && t>=0 && k*t<menor) {menor=k*t;escolhido=k;}
+    }
+    return escolhido;
+}
+
+/* destino: -1 livre, 0 caminhao, 1 drones. Compara makespan e soma de tempos.
+ * A posicao aleatoria e os desempates mantem caminhos diferentes entre sementes. */
+static int inserirReconstrucaoCV(const Instancia *inst,Solucao *s,Solucao *teste,
+                                Solucao *melhor,int j,int destino)
+{
+    double valor=INFINITY,soma=INFINITY;
+    if(destino!=1) {
+        double delta;int p=melhorPosicaoCaminhaoCV(inst,s,j,&delta);
+        copiarDecisoesCV(s,melhor);inserirCaminhaoCV(melhor,j,p);
+        if(!avaliarParcialCV(inst,melhor)) return 0;
+        valor=melhor->makespan;soma=melhor->tempoCaminhao+melhor->tempoDrones;
+    }
+    if(destino!=0 && clientePodeUsarDrone(inst,j)) {
+        int nd=s->numMissoesDrone;
+        int posicoes[3]={0,nd,rand()%(nd+1)};
+        for(int h=0;h<3;h++) {
+            int pos=posicoes[h];
+            if((h==1 && pos==posicoes[0]) || (h==2 && (pos==posicoes[0] || pos==posicoes[1]))) continue;
+            for(int k=inst->clientes[j].minDrones;k<=inst->numDrones;k++) {
+                double t=inst->tempoDrone[j][k];if(!isfinite(t) || t<0) continue;
+                copiarDecisoesCV(s,teste);
+                memmove(teste->missaoDrone+pos+1,teste->missaoDrone+pos,(size_t)(nd-pos)*sizeof(MissaoDrone));
+                teste->missaoDrone[pos]=(MissaoDrone){j,k,0,0};teste->numMissoesDrone++;
+                if(!avaliarParcialCV(inst,teste)) return 0;
+                double total=teste->tempoCaminhao+teste->tempoDrones;
+                if(teste->makespan<valor-1e-9 ||
+                   (fabs(teste->makespan-valor)<1e-9 && (total<soma-1e-9 ||
+                    (fabs(total-soma)<1e-9 && rand()%2)))) {
+                    copiarDecisoesCV(teste,melhor);valor=teste->makespan;soma=total;
+                }
+            }
+        }
+    }
+    if(!isfinite(valor)) return 0;
+    copiarDecisoesCV(melhor,s);return avaliarParcialCV(inst,s);
+}
+
+static void polirRotaReconstrucaoCV(const Instancia *inst,Solucao *s)
+{
+    /* Passes limitados: custo previsivel por proposta, sem impedir pioras no SA. */
+    for(int passe=0;passe<2;passe++) {
+        bool mudou=false;
+        for(int i=0;i<s->numMissoesCaminhao-1;i++)
+            for(int j=i+1;j<s->numMissoesCaminhao;j++)
+                if(deltaDoisOpt(inst,s,i,j)<-1e-9) {inverterTrecho(s->missaoCaminhao,i,j);mudou=true;}
+        if(!mudou) break;
+    }
+}
+
+static int prepararMacroCV(const Instancia *inst,const Solucao *a,Solucao *b,
+                          Solucao *teste,Solucao *melhor)
+{
+    if(!inst || inst->n<1 || !a || !b || a==b || !a->avaliacaoValida || !inst->clientes ||
+       !b->missaoCaminhao || !b->missaoDrone || !b->prefixosDrone ||
+       a->missaoCaminhao==b->missaoCaminhao || a->missaoDrone==b->missaoDrone) return 0;
+    Instancia dimensoes={.n=inst->n,.numDrones=inst->numDrones};
+    alocarSolucao(&dimensoes,teste);alocarSolucao(&dimensoes,melhor);
+    if(!teste->missaoCaminhao || !teste->missaoDrone || !teste->prefixosDrone ||
+       !melhor->missaoCaminhao || !melhor->missaoDrone || !melhor->prefixosDrone) return 0;
+    copiarDecisoesCV(a,b);return 1;
+}
+
+int trocarRecursosCV(const Instancia *inst,const Solucao *atual,Solucao *s)
+{
+    Solucao teste={0},melhor={0};int ok=0;int *grupo=NULL;
+    if(!prepararMacroCV(inst,atual,s,&teste,&melhor)) goto fim;
+    grupo=calloc((size_t)inst->n,sizeof *grupo);if(!grupo) goto fim;
+    int ancora=-1,total=0;
+    for(int i=0;i<s->numMissoesCaminhao;i++) {
+        int j=s->missaoCaminhao[i].n;
+        if(clientePodeUsarDrone(inst,j) && rand()%++total==0) ancora=j;
+    }
+    if(ancora<0 || !s->numMissoesDrone) {ok=escalonarMissoesDrone(inst,s)&&calcularMakespan(inst,s);goto fim;}
+    /* Metade das propostas prioriza um local que efetivamente encurta a rota;
+     * a outra metade conserva a ancora uniforme. */
+    if(rand()%2) {
+        double economia=0;
+        for(int h=0;h<s->numMissoesCaminhao;h++) {
+            int x=s->missaoCaminhao[h].n,anterior=0;double rota=0;bool viavel=true;
+            if(!clientePodeUsarDrone(inst,x)) continue;
+            for(int i=0;i<s->numMissoesCaminhao;i++) {
+                int j=s->missaoCaminhao[i].n;
+                if(inst->clientes[j].x==inst->clientes[x].x && inst->clientes[j].y==inst->clientes[x].y) {
+                    if(!clientePodeUsarDrone(inst,j)) {viavel=false;break;}
+                } else {rota+=tempoTrecho(inst,anterior,j);anterior=j;}
+            }
+            rota+=tempoTrecho(inst,anterior,0);
+            double ganho=atual->tempoCaminhao-rota;
+            if(viavel && ganho>economia+1e-9) {economia=ganho;ancora=x;}
+        }
+    }
+    /* Um local inteiro pode conter mais clientes que a fracao de um LNS. */
+    bool completo=true;
+    for(int i=0;i<s->numMissoesCaminhao;i++) {
+        int j=s->missaoCaminhao[i].n;
+        if(inst->clientes[j].x==inst->clientes[ancora].x && inst->clientes[j].y==inst->clientes[ancora].y) {
+            if(!clientePodeUsarDrone(inst,j)) completo=false;
+            grupo[j]=1;
+        }
+    }
+    if(!completo) {memset(grupo,0,(size_t)inst->n*sizeof *grupo);grupo[ancora]=1;}
+    int tamanhoGrupo=0;for(int j=1;j<inst->n;j++) tamanhoGrupo+=grupo[j];
+    if(tamanhoGrupo==1 && rand()%2) {
+        int alvoGrupo=2+rand()%3;
+        while(tamanhoGrupo<alvoGrupo) {
+            int proximo=-1;double distancia=INFINITY;
+            for(int i=0;i<s->numMissoesCaminhao;i++) {
+                int j=s->missaoCaminhao[i].n;
+                if(grupo[j] || !clientePodeUsarDrone(inst,j)) continue;
+                double d=fabs(inst->clientes[j].x-inst->clientes[ancora].x)+fabs(inst->clientes[j].y-inst->clientes[ancora].y);
+                if(d<distancia || (d==distancia && rand()%2)) {distancia=d;proximo=j;}
+            }
+            if(proximo<0) break;
+            grupo[proximo]=1;tamanhoGrupo++;
+        }
+    }
+    int nc=0;
+    double carga=0;
+    for(int i=0;i<s->numMissoesCaminhao;i++) {
+        int j=s->missaoCaminhao[i].n;
+        if(grupo[j]) carga+=cargaMinimaClienteCV(inst,j);
+        else s->missaoCaminhao[nc++]=s->missaoCaminhao[i];
+    }
+    s->numMissoesCaminhao=nc;
+    for(int i=0;i<s->numMissoesDrone;i++) carga+=cargaMinimaClienteCV(inst,s->missaoDrone[i].cliente);
+    double alvo=fmin(atual->makespan,custoRotaMelhoria(inst,s));
+    /* Pelo menos um retorno, depois libera carga suficiente para a meta estimada.
+     * 20% de escolhas uniformes evitam uma unica regra de retorno. */
+    int retornados=0;
+    while(s->numMissoesDrone && (!retornados || carga>inst->numDrones*alvo)) {
+        int escolhido=rand()%s->numMissoesDrone;
+        if(rand()%5) {
+            double maior=-INFINITY;
+            for(int i=0;i<s->numMissoesDrone;i++) {
+                int j=s->missaoDrone[i].cliente;double delta;
+                melhorPosicaoCaminhaoCV(inst,s,j,&delta);
+                double ganho=cargaMinimaClienteCV(inst,j)/(1.0+fmax(0,delta));
+                if(ganho>maior) {maior=ganho;escolhido=i;}
+            }
+        }
+        int j=s->missaoDrone[escolhido].cliente;double delta;
+        int pos=melhorPosicaoCaminhaoCV(inst,s,j,&delta);inserirCaminhaoCV(s,j,pos);
+        carga-=cargaMinimaClienteCV(inst,j);
+        memmove(s->missaoDrone+escolhido,s->missaoDrone+escolhido+1,
+                (size_t)(s->numMissoesDrone-escolhido-1)*sizeof(MissaoDrone));
+        s->numMissoesDrone--;retornados++;
+        alvo=fmin(atual->makespan,custoRotaMelhoria(inst,s));
+    }
+    /* A carga minima e um incumbente de reparo, nunca uma poda de quantidades. */
+    for(int i=0;i<s->numMissoesDrone;i++)
+        s->missaoDrone[i].qtdDrones=menorCargaKCV(inst,s->missaoDrone[i].cliente);
+    if(!avaliarParcialCV(inst,s)) goto fim;
+    int inicio=rand()%(inst->n-1)+1;
+    for(int h=0;h<inst->n-1;h++) {
+        int j=1+(inicio-1+h)%(inst->n-1);
+        if(grupo[j] && !inserirReconstrucaoCV(inst,s,&teste,&melhor,j,1)) goto fim;
+    }
+    polirRotaReconstrucaoCV(inst,s);
+    ok=escalonarMissoesDrone(inst,s)&&calcularMakespan(inst,s);
+fim:
+    free(grupo);liberarSolucao(&teste);liberarSolucao(&melhor);return ok;
+}
+
+int reconstruirParcialCV(const Instancia *inst,const Solucao *atual,Solucao *s,
+                        double minimo,double maximo)
+{
+    Solucao teste={0},melhor={0};int ok=0;int *removidos=NULL,*lista=NULL;
+    if(!isfinite(minimo) || !isfinite(maximo) || minimo<=0 || minimo>maximo || maximo>1) return 0;
+    if(!prepararMacroCV(inst,atual,s,&teste,&melhor)) goto fim;
+    if(inst->n<=1) {ok=escalonarMissoesDrone(inst,s)&&calcularMakespan(inst,s);goto fim;}
+    removidos=calloc((size_t)inst->n,sizeof *removidos);
+    lista=malloc((size_t)inst->n*sizeof *lista);if(!removidos || !lista) goto fim;
+    double fracao=minimo+(maximo-minimo)*(double)rand()/((double)RAND_MAX+1.0);
+    int alvo=(int)ceil(fracao*(inst->n-1));if(alvo<1) alvo=1;
+    int modo=rand()%3,ancora=1+rand()%(inst->n-1);
+    for(int h=0;h<alvo;h++) {
+        int j=0,total=0;double maior=-INFINITY;
+        for(int x=1;x<inst->n;x++) if(!removidos[x]) {
+            if(!modo) {if(rand()%++total==0) j=x;continue;}
+            double valor;
+            if(modo==1) valor=-fabs(inst->clientes[x].x-inst->clientes[ancora].x)-fabs(inst->clientes[x].y-inst->clientes[ancora].y);
+            else {
+                valor=-1;
+                for(int i=0;i<atual->numMissoesCaminhao;i++) if(atual->missaoCaminhao[i].n==x) {
+                    int a=i?atual->missaoCaminhao[i-1].n:0;
+                    int b=i+1<atual->numMissoesCaminhao?atual->missaoCaminhao[i+1].n:0;
+                    valor=tempoTrecho(inst,a,x)+tempoTrecho(inst,x,b)-tempoTrecho(inst,a,b);
+                }
+                for(int i=0;i<atual->numMissoesDrone;i++) if(atual->missaoDrone[i].cliente==x)
+                    valor=cargaMinimaClienteCV(inst,x)/fmax(1,inst->numDrones);
+            }
+            if(valor>maior || (valor==maior && rand()%2)) {maior=valor;j=x;}
+        }
+        removidos[j]=1;lista[h]=j;
+    }
+    int nc=0,nd=0;
+    for(int i=0;i<s->numMissoesCaminhao;i++) if(!removidos[s->missaoCaminhao[i].n]) s->missaoCaminhao[nc++]=s->missaoCaminhao[i];
+    for(int i=0;i<s->numMissoesDrone;i++) if(!removidos[s->missaoDrone[i].cliente]) s->missaoDrone[nd++]=s->missaoDrone[i];
+    s->numMissoesCaminhao=nc;s->numMissoesDrone=nd;
+    for(int i=alvo-1;i>0;i--) {int j=rand()%(i+1),aux=lista[i];lista[i]=lista[j];lista[j]=aux;}
+    if(!avaliarParcialCV(inst,s)) goto fim;
+    for(int i=0;i<alvo;i++) if(!inserirReconstrucaoCV(inst,s,&teste,&melhor,lista[i],-1)) goto fim;
+    polirRotaReconstrucaoCV(inst,s);
+    ok=escalonarMissoesDrone(inst,s)&&calcularMakespan(inst,s);
+fim:
+    free(removidos);free(lista);liberarSolucao(&teste);liberarSolucao(&melhor);return ok;
+}
+
+/* Implementacao privada: conserva os comandos de compilacao existentes. */
+#include "reparo_alvo.inc"
 
