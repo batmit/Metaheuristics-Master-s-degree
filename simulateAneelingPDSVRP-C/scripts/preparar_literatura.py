@@ -68,6 +68,7 @@ LARGE = '''50-r-e 69 112 62 104 62 100 61 100
 
 
 def main():
+    """Transcreve os valores publicados e conserva LB, UB, prova e origem separadamente."""
     rows = []
     for line in SMALL.splitlines():
         name, *values = line.split()

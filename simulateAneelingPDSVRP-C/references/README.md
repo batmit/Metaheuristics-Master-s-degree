@@ -1,5 +1,30 @@
 # Referencias da comparacao PDSVRP-C
 
+## Tempos de computacao (07/11/2026)
+
+`literature_times.json` registra tempos totais das pequenas extraidos das tabelas
+3 e 4 de `cor2024.html` (preprint). Para cada configuracao, seleciona o menor
+`Sec_tot` entre modelos cujo UB coincide com o BKS do catalogo. O tempo inclui
+a prova quando o modelo encerra; nao e o tempo ate encontrar a melhor solucao.
+Modelo e tabela ficam registrados em `time_source`. Reproduzir com
+`python scripts/extrair_tempos_literatura.py`. Nao atribuir estes tempos a versao
+publicada sem nova conferencia. Plataforma informada no preprint: Intel Core
+i7 12700F, 32 GB RAM, Gurobi 10.0 ou OR-Tools CP-SAT 9.6, limite de 3600 s.
+
+Para as grandes, os tempos correspondentes aos BKS MIC nao foram confirmados.
+O repositorio retornou HTTP 403 durante esta consulta, inclusive no endereco
+`https://iris.unimore.it/retrieve/0929c99b-71a5-4f38-ba73-8c5a6d1e2eb0/chapter.pdf`.
+Esses tempos permanecem nulos (`N/D` na tabela); nao se reutiliza o tempo de
+outro artigo para uma solucao diferente nem se converte limite em tempo medido.
+
+Atualizacao em 06/11/2026: o PDF original de Nguyen e Ha (2023), fornecido pelo
+usuario, permitiu recalcular a 126-rc-e. As 1.512 entradas da matriz coincidem
+com o codigo fisico original e as regras de massa total, cooperacao e preparo.
+O certificado RnR=144 de UM caminhao tambem foi reconstruido e validado.
+O certificado MIC 2024 de CINCO caminhoes com valor 76 continua indisponivel
+nas fontes consultadas. Detalhes e ambiguidades do PDF:
+`docs/auditorias/recalculo126.md` na raiz do projeto.
+
 Pesquisa em 30/10/2026. A publicacao mais recente localizada com resultados
 por instancia do PDSVRP-C foi MIC 2024. Nao confundir data de indexacao/upload
 do PDF com ano da publicacao. Os dados ORLab de 2025 de PDSTSP-C/PDSOP-C nao

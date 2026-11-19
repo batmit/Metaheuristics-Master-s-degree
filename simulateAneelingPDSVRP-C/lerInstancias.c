@@ -1,3 +1,4 @@
+/* Leitura e liberacao dos dados oficiais de clientes e tempos de voo. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,66 +8,36 @@
 #define TAM_LINHA 256
 #define CAPACIDADE_INICIAL 16
 
-/*
- * Inicializa a struct para um estado seguro.
- * Assim, em caso de erro durante a leitura, podemos liberar a memoria
- * sem acessar ponteiros nao inicializados.
- */
-static void inicializarInstancia(Instancia *inst)
-{
-    inst->n = 0;
-    inst->numDrones = 0;
-    inst->numCaminhoes = 0;
-
-    inst->truckSpeed = 0.0;
-    inst->batteryWeight = 0.0;
-    inst->batteryCapacity = 0.0;
-    inst->maxDischargeCurrent = 0.0;
-    inst->voltage = 0.0;
-
-    inst->clientes = NULL;
-    inst->tempoCaminhao = NULL;
-    inst->tempoDrone = NULL;
-}
-
-/*
- * Libera uma matriz caso ela ja tenha sido criada em outra etapa
- * do projeto.
- */
+/* Cada linha da matriz possui alocacao propria. */
 static void liberarMatriz(double **matriz, int linhas)
 {
-    if (matriz == NULL)
-        return;
-
-    for (int i = 0; i < linhas; i++)
-        free(matriz[i]);
-
+    if (!matriz) return;
+    for (int i = 0; i < linhas; ++i) free(matriz[i]);
     free(matriz);
 }
 
+/* Libera todos os dados de entrada e restabelece o estado vazio. */
 void liberarInstancia(Instancia *inst)
 {
     if (inst == NULL)
         return;
 
     free(inst->clientes);
-    inst->clientes = NULL;
 
     liberarMatriz(inst->tempoCaminhao, inst->n);
-    inst->tempoCaminhao = NULL;
 
     liberarMatriz(inst->tempoDrone, inst->n);
-    inst->tempoDrone = NULL;
 
-    inicializarInstancia(inst);
+    *inst = (Instancia){0};
 }
 
+/* Le parametros e clientes; exige IDs consecutivos e dados fisicos finitos. */
 int lerInstancia(const char *nomeArquivo, Instancia *inst)
 {
     if (nomeArquivo == NULL || inst == NULL)
         return 0;
 
-    inicializarInstancia(inst);
+    *inst = (Instancia){0};
 
     FILE *arquivo = fopen(nomeArquivo, "r");
 
@@ -78,62 +49,31 @@ int lerInstancia(const char *nomeArquivo, Instancia *inst)
 
     char linha[TAM_LINHA];
 
-    /* ========================================================
-       1. Le os parametros gerais e salva diretamente em Instancia
-       ======================================================== */
-
-    if (fgets(linha, sizeof(linha), arquivo) == NULL ||
-        sscanf(linha, "NUM_DRONES, %d", &inst->numDrones) != 1)
-    {
+    /* Mesma regra de leitura para os seis parametros do cabecalho. */
+    const char *formatos[] = {
+        "TRUCK_SPEED, %lf", "BATTERY_WEIGHT, %lf", "BATTERY_CAPACITY, %lf",
+        "MAX_DISCHARGE_CURRENT, %lf", "VOLTAGE, %lf"
+    };
+    double *parametros[] = {
+        &inst->truckSpeed, &inst->batteryWeight, &inst->batteryCapacity,
+        &inst->maxDischargeCurrent, &inst->voltage
+    };
+    if (!fgets(linha, sizeof(linha), arquivo) ||
+        sscanf(linha, "NUM_DRONES, %d", &inst->numDrones) != 1) {
         fprintf(stderr, "Erro ao ler NUM_DRONES.\n");
         fclose(arquivo);
         return 0;
     }
-
-    if (fgets(linha, sizeof(linha), arquivo) == NULL ||
-        sscanf(linha, "TRUCK_SPEED, %lf", &inst->truckSpeed) != 1)
-    {
-        fprintf(stderr, "Erro ao ler TRUCK_SPEED.\n");
-        fclose(arquivo);
-        return 0;
+    for (size_t i = 0; i < sizeof(parametros) / sizeof(*parametros); ++i) {
+        if (!fgets(linha, sizeof(linha), arquivo) ||
+            sscanf(linha, formatos[i], parametros[i]) != 1) {
+            fprintf(stderr, "Erro ao ler parametro: %s\n", formatos[i]);
+            fclose(arquivo);
+            return 0;
+        }
     }
 
-    if (fgets(linha, sizeof(linha), arquivo) == NULL ||
-        sscanf(linha, "BATTERY_WEIGHT, %lf", &inst->batteryWeight) != 1)
-    {
-        fprintf(stderr, "Erro ao ler BATTERY_WEIGHT.\n");
-        fclose(arquivo);
-        return 0;
-    }
-
-    if (fgets(linha, sizeof(linha), arquivo) == NULL ||
-        sscanf(linha, "BATTERY_CAPACITY, %lf", &inst->batteryCapacity) != 1)
-    {
-        fprintf(stderr, "Erro ao ler BATTERY_CAPACITY.\n");
-        fclose(arquivo);
-        return 0;
-    }
-
-    if (fgets(linha, sizeof(linha), arquivo) == NULL ||
-        sscanf(linha, "MAX_DISCHARGE_CURRENT, %lf", &inst->maxDischargeCurrent) != 1)
-    {
-        fprintf(stderr, "Erro ao ler MAX_DISCHARGE_CURRENT.\n");
-        fclose(arquivo);
-        return 0;
-    }
-
-    if (fgets(linha, sizeof(linha), arquivo) == NULL ||
-        sscanf(linha, "VOLTAGE, %lf", &inst->voltage) != 1)
-    {
-        fprintf(stderr, "Erro ao ler VOLTAGE.\n");
-        fclose(arquivo);
-        return 0;
-    }
-
-    /* ========================================================
-       2. Le e valida o cabecalho da tabela de nos
-       ======================================================== */
-
+    /* O cabecalho deve identificar as quatro colunas dos clientes. */
     if (fgets(linha, sizeof(linha), arquivo) == NULL)
     {
         fprintf(stderr, "Erro: cabecalho dos clientes nao encontrado.\n");
@@ -158,13 +98,7 @@ int lerInstancia(const char *nomeArquivo, Instancia *inst)
         return 0;
     }
 
-    /* ========================================================
-       3. Le os clientes.
-
-       Como o arquivo nao informa previamente quantos nos existem,
-       usamos realloc para aumentar o vetor conforme necessario.
-       ======================================================== */
-
+    /* O numero de clientes e descoberto durante a leitura. */
     int capacidade = CAPACIDADE_INICIAL;
 
     inst->clientes = malloc((size_t)capacidade * sizeof(Cliente));
@@ -225,11 +159,6 @@ int lerInstancia(const char *nomeArquivo, Instancia *inst)
             inst->clientes = novoVetor;
         }
 
-        /* Esses dois campos NAO existem no arquivo.
-           Serao calculados posteriormente pelo modelo do PDSTSP-C. */
-        cliente.elegivelDrone = false;
-        cliente.minDrones = 0;
-
         inst->clientes[inst->n] = cliente;
         inst->n++;
     }
@@ -259,41 +188,10 @@ int lerInstancia(const char *nomeArquivo, Instancia *inst)
     if (vetorExato != NULL)
         inst->clientes = vetorExato;
 
-    /* Nesta etapa, esses dados ainda nao sao calculados. */
-    inst->tempoCaminhao = NULL;
-    inst->tempoDrone = NULL;
-
     return 1;
 }
 
-void imprimirInstancia(const Instancia *inst)
-{
-    if (inst == NULL)
-        return;
-
-    printf("NUM_DRONES: %d\n", inst->numDrones);
-    printf("NUM_CAMINHOES: %d\n", inst->numCaminhoes);
-    printf("TRUCK_SPEED: %.2f\n", inst->truckSpeed);
-    printf("BATTERY_WEIGHT: %.2f\n", inst->batteryWeight);
-    printf("BATTERY_CAPACITY: %.2f\n", inst->batteryCapacity);
-    printf("MAX_DISCHARGE_CURRENT: %.2f\n", inst->maxDischargeCurrent);
-    printf("VOLTAGE: %.2f\n", inst->voltage);
-    printf("NUM_NOS: %d\n\n", inst->n);
-
-    printf("node\tx\ty\tweight\n");
-
-    for (int i = 0; i < inst->n; i++)
-    {
-        const Cliente *c = &inst->clientes[i];
-
-        printf("%d\t%.2f\t%.2f\t%.2f\n",
-               c->id,
-               c->x,
-               c->y,
-               c->peso);
-    }
-}
-
+/* Le a tabela oficial, converte -1 em infinito e deriva elegibilidade de clientes. */
 int lerTemposDrone(const char *nomeArquivo, Instancia *inst)
 {
     if (!nomeArquivo || !inst || !inst->clientes || inst->n < 1 ||
@@ -303,15 +201,7 @@ int lerTemposDrone(const char *nomeArquivo, Instancia *inst)
 
     if (arquivo == NULL)
     {
-        printf("Erro ao abrir arquivo: %s\n", nomeArquivo);
-        return 0;
-    }
-
-    // Verifica se a matriz ja foi alocada
-    if (inst->tempoDrone == NULL)
-    {
-        printf("Matriz tempoDrone nao foi alocada.\n");
-        fclose(arquivo);
+        fprintf(stderr, "Erro ao abrir arquivo: %s\n", nomeArquivo);
         return 0;
     }
 
@@ -342,7 +232,7 @@ int lerTemposDrone(const char *nomeArquivo, Instancia *inst)
 
         if (fscanf(arquivo, "%d", &id) != 1 || id != i)
         {
-            printf("Erro ao ler cliente %d.\n", i);
+            fprintf(stderr, "Erro ao ler cliente %d.\n", i);
             fclose(arquivo);
             return 0;
         }
@@ -353,7 +243,7 @@ int lerTemposDrone(const char *nomeArquivo, Instancia *inst)
 
             if (fscanf(arquivo, "%lf", &tempo) != 1)
             {
-                printf("Erro ao ler tempo do cliente %d.\n", i);
+                fprintf(stderr, "Erro ao ler tempo do cliente %d.\n", i);
                 fclose(arquivo);
                 return 0;
             }
@@ -378,7 +268,7 @@ int lerTemposDrone(const char *nomeArquivo, Instancia *inst)
             }
             else
             {
-                printf("Tempo invalido para cliente %d.\n", i);
+                fprintf(stderr, "Tempo invalido para cliente %d.\n", i);
                 fclose(arquivo);
                 return 0;
             }
@@ -392,6 +282,7 @@ int lerTemposDrone(const char *nomeArquivo, Instancia *inst)
     return !dadosExtras && !erro;
 }
 
+/* Carrega os dois arquivos e constroi os tempos dos caminhoes; desfaz falhas. */
 int carregarInstancia(const char *nomeArquivo, const char *arquivoTempos,
                      int numCaminhoes, Instancia *inst)
 {

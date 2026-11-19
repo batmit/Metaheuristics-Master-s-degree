@@ -4,213 +4,328 @@
 #include <string.h>
 #include <math.h>
 #include <errno.h>
-#include <limits.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <direct.h>
+#include <wchar.h>
+#else
+#include <sys/stat.h>
+#endif
+
+/* Parametros do lote: uma busca por instancia, sem argumentos de terminal. */
+#ifndef SA_SEGUNDOS_POR_INSTANCIA
+#define SA_SEGUNDOS_POR_INSTANCIA 30.0
+#endif
+#ifndef MOSTRAR_RECORDES
+#define MOSTRAR_RECORDES 0
+#endif
 #include "SA.h"
-#include "main.h"
 #include "lerInstancias.h"
-#include "cv.h"
 
 typedef struct CasoBenchmark {
     const char *nome;
     const char *pasta;
-    double melhorLiteratura;
-    bool movimentosGrupo; /* Habilita transferencias conjuntas neste caso. */
+    double literatura2024;
+    double literatura2025;
+    double segundosLiteratura2025;
 } CasoBenchmark;
 
-/* Quatro instancias ainda abertas no pacote oficial ORLab de 2025.
- * Logs results/logs/tsp/: status FEASIBLE e LB < UB.
- * melhorLiteratura guarda o UB; a revisao dos 60 casos esta em
- * resultados/revisao_literatura_2025/relatorio_revisao_2024_2025.md.
- * https://orlab.com.vn/download/data-and-results-of-pdstsp-c-and-pdsop-c/ */
+/* Referencias UB de 2024 e 2025 da revisao local das 60 instancias.
+ * Referencias e proveniencia: instances/pdstsp-c/referencias.csv.
+ * A pasta segue o catalogo oficial de entradas. */
 static const CasoBenchmark casos[] = {
-    {"67-c-c", "large", 74.0, true}, /* LB=73 */
-    {"165-r-c", "large", 160.0, true}, /* LB=156 */
-    {"167-r-e", "large", 180.0, true}, /* LB=179 */
-    {"181-r-e", "large", 216.0, true}, /* LB=215 */
+    {"15-r-e", "small", 92.0, 92.0, 0.0900199},
+    {"15-rc-c", "small", 44.0, 44.0, 0.461427},
+    {"16-c-c", "small", 60.0, 60.0, 0.0470937},
+    {"16-r-e", "small", 112.0, 112.0, 0.0639521},
+    {"18-c-c", "small", 56.0, 56.0, 0.271486},
+    {"18-r-e", "small", 96.0, 96.0, 0.235289},
+    {"18-rc-c", "small", 57.0, 57.0, 0.966265},
+    {"19-c-c", "small", 44.0, 44.0, 0.867991},
+    {"20-c-c", "small", 43.0, 43.0, 0.170847},
+    {"20-r-c", "small", 64.0, 64.0, 0.413625},
+    {"20-r-e", "small", 80.0, 80.0, 0.291596},
+    {"20-rc-c", "small", 96.0, 96.0, 0.056689},
+    {"20-rc-e", "small", 100.0, 100.0, 0.0759249},
+    {"21-c-c", "small", 62.0, 62.0, 14.2166},
+    {"21-r-e", "small", 85.0, 85.0, 22.9676},
+    {"23-c-e", "small", 80.0, 80.0, 0.0555869},
+    {"23-r-c", "small", 88.0, 88.0, 0.43017},
+    {"24-c-e", "small", 84.0, 84.0, 0.0786485},
+    {"24-r-e", "small", 112.0, 112.0, 1.7949},
+    {"24-rc-c", "small", 70.0, 70.0, 0.308217},
+    {"25-c-c", "small", 56.0, 56.0, 0.630344},
+    {"25-r-e", "small", 104.0, 104.0, 2.43328},
+    {"25-rc-e", "small", 92.0, 92.0, 1.57797},
+    {"26-r-c", "small", 103.0, 103.0, 9.1018},
+    {"27-c-c", "small", 84.0, 84.0, 0.205662},
+    {"27-c-e", "small", 68.0, 68.0, 1.61391},
+    {"27-rc-c", "small", 100.0, 100.0, 0.136626},
+    {"27-rc-e", "small", 84.0, 84.0, 5.72948},
+    {"29-rc-e", "small", 116.0, 116.0, 0.892377},
+    {"30-c-c", "small", 96.0, 96.0, 0.108423},
+    {"50-r-e", "large", 116.0, 116.0, 41.2642},
+    {"53-r-e", "large", 132.0, 132.0, 11.4045},
+    {"66-rc-e", "large", 124.0, 124.0, 5.70918},
+    {"67-c-c", "large", 76.0, 74.0, 3600.04},
+    {"68-rc-c", "large", 76.0, 76.0, 11.6876},
+    {"76-c-c", "large", 52.0, 52.0, 7.46216},
+    {"82-c-e", "large", 64.0, 64.0, 3.21081},
+    {"82-rc-c", "large", 104.0, 104.0, 17.9718},
+    {"88-c-e", "large", 108.0, 108.0, 2.55103},
+    {"91-r-c", "large", 124.0, 120.0, 6.75553},
+    {"99-rc-c", "large", 100.0, 99.0, 636.502},
+    {"101-r-c", "large", 120.0, 116.0, 41.2618},
+    {"103-rc-c", "large", 124.0, 120.0, 101.102},
+    {"105-rc-e", "large", 120.0, 112.0, 125.257},
+    {"108-rc-e", "large", 136.0, 135.0, 162.858},
+    {"114-rc-c", "large", 96.0, 96.0, 769.218},
+    {"121-rc-e", "large", 124.0, 121.0, 808.557},
+    {"126-r-c", "large", 160.0, 152.0, 141.049},
+    {"126-rc-e", "large", 144.0, 136.0, 232.423},
+    {"144-rc-c", "large", 128.0, 124.0, 132.403},
+    {"154-c-c", "large", 72.0, 68.0, 27.2542},
+    {"165-r-c", "large", 164.0, 160.0, 3600.1},
+    {"167-r-e", "large", 188.0, 180.0, 3600.11},
+    {"173-r-c", "large", 164.0, 160.0, 1356.87},
+    {"173-rc-c", "large", 133.0, 130.0, 1685.77},
+    {"181-r-e", "large", 224.0, 216.0, 3600.19},
+    {"185-c-c", "large", 96.0, 96.0, 24.9943},
+    {"187-rc-e", "large", 196.0, 188.0, 114.949},
+    {"198-c-c", "large", 64.0, 64.0, 48.5712},
+    {"200-r-e", "large", 212.0, 200.0, 543.184},
 };
 
-static int testarInstancia(const CasoBenchmark *caso, double *resultado,const ParametrosSA *configuracao)
-
+/* Carrega uma instancia e suas matrizes uma unica vez por lote. */
+static int carregarCaso(const CasoBenchmark *caso, Instancia *inst)
 {
-    const char *nome = caso->nome;
-    Instancia inst = {0};
-    Solucao solucao = {0};
-    char caminhoInstancia[256], caminhoTempos[256];
-    const char *etapa = "carregar instancia";
-    int sucesso = 0;
-    snprintf(caminhoInstancia, sizeof caminhoInstancia,
-             "instances/pdstsp-c/%s/%s.txt", caso->pasta, nome);
-    snprintf(caminhoTempos, sizeof caminhoTempos,
-             "instances/pdstsp-c/%s/tau_kj_%s.txt", caso->pasta, nome);
-
-    printf("%-10s ", nome);
-    fflush(stdout);
-    if (!lerInstancia(caminhoInstancia, &inst)) goto finalizar;
-
-    etapa = "alocar matrizes";
-    alocarInstancias(&inst);
-    if (inst.tempoCaminhao == NULL || inst.tempoDrone == NULL) goto finalizar;
-    for (int i = 0; i < inst.n; i++)
-        if (inst.tempoCaminhao[i] == NULL || inst.tempoDrone[i] == NULL)
-            goto finalizar;
-    construirMatrizCaminhao(&inst);
-
-    etapa = "carregar tempos dos drones";
-    if (!lerTemposDrone(caminhoTempos, &inst)) goto finalizar;
-    etapa = "alocar solucao";
-    alocarSolucao(&inst, &solucao);
-    if (solucao.missaoCaminhao == NULL || solucao.missaoDrone == NULL ||
-        solucao.prefixosDrone == NULL) goto finalizar;
-    etapa = "construir solucao inicial";
-    if (!construirSolucaoInicial(&inst, &solucao)) goto finalizar;
-
-    double makespanInicial = solucao.makespan;
-    ParametrosSA parametros = *configuracao;
-    if(strcmp(nome,"165-r-c")) {
-        parametros.reparoDirigido=parametros.cadeiasEjecao=parametros.filtrosReparo=parametros.reparoCP=false;
-    }
-    parametros.movimentosGrupo = caso->movimentosGrupo;
-    EstatisticasSA estatisticas={0};parametros.estatisticas=&estatisticas;
-    double temperaturaInicial;
-    double inicio = relogioSA();
-    etapa = "calibrar e executar simulated annealing";
-    if(!resolverComCalibracaoSA(&inst,&solucao,&parametros,&temperaturaInicial)) goto finalizar;
-    double segundos = relogioSA()-inicio;
-    double melhoria = makespanInicial > 0.0 ?
-        100.0 * (makespanInicial - solucao.makespan) / makespanInicial : 0.0;
-
-    double gap = 100.0 * (solucao.makespan - caso->melhorLiteratura) / caso->melhorLiteratura;
-    printf("%8d %6d %12.2f %12.2f %18.2f %+9.2f %10.2f %10.2f %10.3f OK\n",
-           inst.n - 1, inst.numDrones, makespanInicial, solucao.makespan,
-           caso->melhorLiteratura, gap, melhoria, temperaturaInicial, segundos);
-    printf("  Avaliacoes=%llu; trocas=%llu; reconstrucoes=%llu; retomadas=%llu; atribuicoes na elite=%d\n",
-           estatisticas.avaliacoes,estatisticas.trocas,estatisticas.reconstrucoes,
-           estatisticas.retomadas,estatisticas.atribuicoesElite);
-    if(parametros.reparoDirigido)
-        printf("  Reparo alvo: propostas=%llu; podas carga/rota=%llu/%llu; melhorias=%llu; CP chamadas/sucessos/inviaveis/limites/erros=%llu/%llu/%llu/%llu/%llu; tempo nativo/CP=%.3f/%.3f s\n",
-          estatisticas.reparo.propostas,estatisticas.reparo.podasCarga,estatisticas.reparo.podasRota,
-          estatisticas.reparo.melhorias,estatisticas.reparo.chamadasCP,estatisticas.reparo.sucessosCP,
-          estatisticas.reparo.inviaveisCP,estatisticas.reparo.limitesCP,estatisticas.reparo.errosCP,
-          estatisticas.reparo.segundosNativo,estatisticas.reparo.segundosCP);
-    *resultado = solucao.makespan;
-    sucesso = 1;
-
-finalizar:
-    if (!sucesso) {
-        printf("FALHA\n");
-        fprintf(stderr, "Instancia %s: falha ao %s.\n", nome, etapa);
-    }
-    liberarSolucao(&solucao);
-    liberarInstancia(&inst);
-    return sucesso;
+    char arquivo[256];
+    snprintf(arquivo, sizeof arquivo, "instances/pdstsp-c/%s/%s.txt", caso->pasta, caso->nome);
+    if (!lerInstancia(arquivo, inst)) return 0;
+    alocarInstancias(inst);
+    if (!inst->tempoCaminhao || !inst->tempoDrone) return 0;
+    for (int i = 0; i < inst->n; i++)
+        if (!inst->tempoCaminhao[i] || !inst->tempoDrone[i]) return 0;
+    construirMatrizCaminhao(inst);
+    snprintf(arquivo, sizeof arquivo, "instances/pdstsp-c/%s/tau_kj_%s.txt", caso->pasta, caso->nome);
+    return lerTemposDrone(arquivo, inst);
 }
 
-int main(int argc,char **argv)
+/* Constroi e resolve uma solucao, liberando seus vetores ao terminar. */
+static int resolverCaso(Instancia *inst, const ParametrosSA *configuracao, double *resultado)
 {
-    unsigned int semente = (unsigned int)time(NULL);
-    size_t total = 10;bool controle=false,semCP=false;double limite=-1;
-    const char *pythonCP=NULL,*scriptCP=NULL;
-    const char *filtro=NULL;
-    for(int i=1;i<argc;i++) {
-        if(!strcmp(argv[i],"--controle")) {controle=true;continue;}
-        if(!strcmp(argv[i],"--sem-reparo-cp")) {semCP=true;continue;}
-        if(i+1>=argc) goto uso;
-        const char *opcao=argv[i],*valor=argv[++i];char *fim;errno=0;
-        if(!strcmp(opcao,"--segundos")) {
-            limite=strtod(valor,&fim);
-            if(errno || !*valor || *fim || !isfinite(limite) || limite<0) goto uso;
-        } else if(!strcmp(opcao,"--execucoes") || !strcmp(opcao,"--semente")) {
-            unsigned long n=strtoul(valor,&fim,10);
-            if(errno || !*valor || *fim || *valor=='-' || n>UINT_MAX) goto uso;
-            if(!strcmp(opcao,"--semente")) semente=(unsigned int)n;
-            else {if(!n) goto uso;total=(size_t)n;}
-        } else if(!strcmp(opcao,"--instancia")) filtro=valor;
-        else if(!strcmp(opcao,"--python-cp")) pythonCP=valor;
-        else if(!strcmp(opcao,"--script-cp")) scriptCP=valor;
-        else goto uso;
+    Solucao solucao = {0};
+    alocarSolucao(inst, &solucao);
+    int ok = solucao.missaoCaminhao && solucao.missaoDrone && solucao.prefixosDrone;
+    double temperatura;
+    if (ok) ok = construirSolucaoInicial(inst, &solucao) &&
+                 resolverComCalibracaoSA(inst, &solucao, configuracao, &temperatura);
+    if (ok) *resultado = solucao.makespan;
+    liberarSolucao(&solucao);
+    return ok;
+}
+
+#define RELATORIO "resultados/relatorio.csv"
+#define TOTAL_CASOS (sizeof casos / sizeof casos[0])
+static const char cabecalho[] = "instancia,melhor_algoritmo,literatura_2024,literatura_2025,gap_percentual,tempo_ultima_execucao_s,tempo_literatura_2025_s\n";
+
+/* Recupera os melhores, aceitando UTF-8 com BOM e finais de linha LF/CRLF. */
+static int lerRelatorio(double melhores[TOTAL_CASOS], double tempos[TOTAL_CASOS])
+{
+    FILE *f = fopen(RELATORIO, "rb");
+    if (!f) {
+        if (errno == ENOENT) return 1;
+        perror("Nao foi possivel abrir " RELATORIO);
+        return 0;
     }
-    ParametrosSA configuracao=controle?parametrosSAPadrao():parametrosSAFoco165();
-    if(semCP)configuracao.reparoCP=false;
-    if(pythonCP)configuracao.pythonCP=pythonCP;
-    if(scriptCP)configuracao.scriptCP=scriptCP;
-    if(limite>=0) configuracao.limiteSegundos=limite;
-    const size_t totalCasos = sizeof casos / sizeof casos[0];
-    if(filtro) {
-        bool encontrado=false;
-        for(size_t c=0;c<totalCasos;c++) if(!strcmp(filtro,casos[c].nome)) encontrado=true;
-        if(!encontrado) goto uso;
+    char linha[512], nome[64];
+    if (!fgets(linha, sizeof linha, f)) {
+        /* Arquivo vazio ainda nao contem resultados; sera inicializado no lote. */
+        int ok = !ferror(f);
+        if (!ok) perror("Erro de leitura em " RELATORIO);
+        if (fclose(f)) ok = 0;
+        return ok;
     }
-    size_t concluidasTotal = 0;
-    FILE *resumo = fopen(controle?"resultados/resumo_quatro_abertas_controle.csv":
-                       "resultados/resumo_quatro_abertas_exploracao.csv", "w");
-    if (resumo == NULL) {
-        perror("Nao foi possivel criar o resumo em resultados");
+    char *titulo = linha;
+    if (strncmp(titulo, "\xEF\xBB\xBF", 3) == 0) titulo += 3;
+    titulo[strcspn(titulo, "\r\n")] = '\0';
+    size_t esperado = strcspn(cabecalho, "\r\n");
+    int antigo = !strcmp(titulo, "instancia,melhor_algoritmo,literatura_2024,literatura_2025,gap_percentual");
+    if (!antigo && (strlen(titulo) != esperado || strncmp(titulo, cabecalho, esperado))) {
+        fprintf(stderr, "Cabecalho invalido em " RELATORIO
+                ". Esperado: %s", cabecalho);
+        fclose(f);
+        return 0;
+    }
+    while (fgets(linha, sizeof linha, f)) {
+        double valor;
+        if (sscanf(linha, "%63[^,],%lf", nome, &valor) != 2 || !isfinite(valor) || valor <= 0) continue;
+        for (size_t c = 0; c < TOTAL_CASOS; c++)
+            if (!strcmp(nome, casos[c].nome)) {
+                if (valor < melhores[c]) melhores[c] = valor;
+                double tempo;
+                if (!antigo && sscanf(linha, "%*[^,],%*[^,],%*[^,],%*[^,],%*[^,],%lf", &tempo) == 1 &&
+                    isfinite(tempo) && tempo >= 0) tempos[c] = tempo;
+            }
+    }
+    int ok = !ferror(f);
+    if (!ok) perror("Erro de leitura em " RELATORIO);
+    if (fclose(f)) ok = 0;
+    return ok;
+}
+
+/* Grava uma linha no CSV; vazio indica ausencia de resultado. */
+static void escreverLinha(FILE *f, size_t c, double melhor, double tempo)
+{
+    const CasoBenchmark *caso = &casos[c];
+    if (isfinite(melhor))
+        fprintf(f, "%s,%.9f,%.9f,%.9f,%.9f", caso->nome, melhor,
+                caso->literatura2024, caso->literatura2025,
+                100.0 * (melhor - caso->literatura2025) / caso->literatura2025);
+    else fprintf(f, "%s,,%.9f,%.9f,", caso->nome, caso->literatura2024, caso->literatura2025);
+    if (isfinite(tempo)) fprintf(f, ",%.9f", tempo);
+    else fputc(',', f);
+    fprintf(f, ",%.9f\n", caso->segundosLiteratura2025);
+}
+
+/* Consolida uma linha por instancia preservando os melhores anteriores. */
+static int salvarRelatorio(const double melhores[TOTAL_CASOS], const double tempos[TOTAL_CASOS])
+{
+    FILE *f = fopen(RELATORIO, "w");
+    if (!f) return 0;
+    fputs(cabecalho, f);
+    for (size_t c = 0; c < TOTAL_CASOS; c++) escreverLinha(f, c, melhores[c], tempos[c]);
+    int ok = !ferror(f);
+    if (fclose(f)) ok = 0;
+    return ok;
+}
+
+/* Localiza as entradas ao abrir por duplo clique e cria a pasta de saida. */
+static int prepararDiretorio(void)
+{
+#ifdef _WIN32
+    /* Caminho UTF-16 suporta nomes de usuario e pastas com acentos. */
+    wchar_t caminho[32768];
+    DWORD tamanho = GetModuleFileNameW(NULL, caminho, 32768);
+    if (!tamanho || tamanho >= 32768) return 0;
+    wchar_t *barra = wcsrchr(caminho, L'\\');
+    if (!barra) return 0;
+    *barra = L'\0';
+    if (!SetCurrentDirectoryW(caminho)) return 0;
+    return _mkdir("resultados") == 0 || errno == EEXIST;
+#else
+    return mkdir("resultados", 0755) == 0 || errno == EEXIST;
+#endif
+}
+
+/* Mostra somente os campos do relatorio em colunas alinhadas. */
+static void mostrarResultado(size_t c, double melhor, double tempo)
+{
+    const CasoBenchmark *caso = &casos[c];
+    if (isfinite(melhor))
+        printf("%-12s %18.2f %16.2f %16.2f %12.2f", caso->nome, melhor,
+               caso->literatura2024, caso->literatura2025,
+               100.0 * (melhor - caso->literatura2025) / caso->literatura2025);
+    else printf("%-12s %18s %16.2f %16.2f %12s", caso->nome, "--",
+                caso->literatura2024, caso->literatura2025, "--");
+    if (isfinite(tempo)) printf(" %18.6f", tempo);
+    else printf(" %18s", "--");
+    printf(" %20.6f\n", caso->segundosLiteratura2025);
+    fflush(stdout);
+}
+
+/* Relogio de parede; inclui carregamento, construcao, calibracao e busca. */
+static double segundosAgora(void)
+{
+#ifdef _WIN32
+    LARGE_INTEGER contador, frequencia;
+    QueryPerformanceFrequency(&frequencia);
+    QueryPerformanceCounter(&contador);
+    return (double)contador.QuadPart / (double)frequencia.QuadPart;
+#else
+    struct timespec agora;
+    timespec_get(&agora, TIME_UTC);
+    return (double)agora.tv_sec + (double)agora.tv_nsec / 1e9;
+#endif
+}
+
+/* Executa exatamente uma busca para cada uma das 60 instancias. */
+static int executarLote(void)
+{
+    if (!prepararDiretorio()) {
+        perror("Falha ao preparar diretorio do executavel");
         return EXIT_FAILURE;
     }
-    fprintf(resumo, "instancia,concluidas,melhor,media,melhor_literatura,gap_melhor_percentual,execucao_melhor,semente_melhor,abaixo_referencia,iguais_referencia,modo,limite_segundos\n");
-    size_t casosSelecionados=filtro?1:totalCasos;
-    printf("PDSTSP-C: %zu instancias; %zu execucoes por instancia; semente base %u.\n", casosSelecionados, total, semente);
-    printf("Modo: %s; limite por execucao (calibracao + busca): %.3f s (zero usa resfriamento).\n",
-           controle?"controle anterior":"exploracao; reparos 1/2/4/5 na 165-r-c",configuracao.limiteSegundos);
-    if(configuracao.limiteSegundos>0) {
-        double previstos=casosSelecionados*(double)total*configuracao.limiteSegundos;
-        printf("Duracao prevista do lote sequencial: %.1f minutos, mais inicializacao e fechamento.\n",previstos/60.0);
+    ParametrosSA configuracao = parametrosSARapido();
+    configuracao.limiteSegundos = SA_SEGUNDOS_POR_INSTANCIA;
+    unsigned int semente = (unsigned int)time(NULL);
+    double melhores[TOTAL_CASOS], tempos[TOTAL_CASOS];
+    for (size_t c = 0; c < TOTAL_CASOS; c++) { melhores[c] = INFINITY; tempos[c] = NAN; }
+    if (!lerRelatorio(melhores, tempos)) {
+        fprintf(stderr, "Falha ao ler " RELATORIO ".\n");
+        return EXIT_FAILURE;
     }
-    for (size_t c = 0; c < totalCasos; c++) {
-        const CasoBenchmark *caso = &casos[c];
-        if(filtro && strcmp(filtro,caso->nome)) continue;
-        size_t concluidas = 0;
-        double melhor = 0.0, soma = 0.0;
-        size_t execucaoMelhor = 0, melhoresLiteratura = 0, iguaisLiteratura = 0;
-        printf("\nInstancia %zu/%zu: %s; %zu execucoes independentes de SA.\n", c + 1, totalCasos, caso->nome, total);
-        printf("Sem otimo comprovado no pacote ORLab de 2025. Cada execucao reconstroi a solucao inicial.\n");
-        printf("Transferencias em grupos: %s.\n", caso->movimentosGrupo ? "ativas" : "desativadas");
-        printf("Melhor literatura: UB dos logs PDSTSP-c do pacote oficial ORLab (2025).\n");
-        printf("Fonte: https://orlab.com.vn/download/data-and-results-of-pdstsp-c-and-pdsop-c/\n");
-        printf("Gap = 100 * (SA - literatura) / literatura. Tempo de parede inclui calibracao e SA.\n\n");
-        printf("%-10s %8s %6s %12s %12s %18s %9s %10s %10s %10s %s\n",
-               "Instancia", "Clientes", "Drones", "Inicial(min)", "SA(min)",
-               "Melhor lit.(min)", "Gap(%)", "Ganho(%)", "T0", "Tempo(s)", "Status");
-        for (size_t i = 0; i < total; i++) {
-            unsigned int sementeExecucao = semente + (unsigned int)(c * total + i);
-            double resultado;
-            srand(sementeExecucao);
-            printf("Execucao %zu/%zu; semente %u\n", i + 1, total, sementeExecucao);
-            if (testarInstancia(caso, &resultado,&configuracao)) {
-                if (concluidas == 0 || resultado < melhor) {
-                    melhor = resultado;
-                    execucaoMelhor = i + 1;
-                }
-                soma += resultado;
-                concluidas++;
-                if (resultado < caso->melhorLiteratura - 1e-9) melhoresLiteratura++;
-                else if (resultado <= caso->melhorLiteratura + 1e-9) iguaisLiteratura++;
-            }
+    int sucesso = 1;
+    printf("%-12s %18s %16s %16s %12s %18s %20s\n", "Instancia", "Resultado atual",
+           "Literatura 2024", "Literatura 2025", "Gap (%)", "Ultima execucao (s)", "Tempo lit. 2025 (s)");
+    fflush(stdout);
+    for (size_t c = 0; c < TOTAL_CASOS; c++) {
+        Instancia inst = {0};
+        double resultado = INFINITY;
+        double inicio = segundosAgora();
+        srand(semente + (unsigned int)c);
+        if (!carregarCaso(&casos[c], &inst)) {
+            fprintf(stderr, "Falha ao carregar %s.\n", casos[c].nome);
+            sucesso = 0;
+        } else if (!resolverCaso(&inst, &configuracao, &resultado)) {
+            resultado = INFINITY;
+            fprintf(stderr, "Falha ao resolver %s.\n", casos[c].nome);
+            sucesso = 0;
+        } else if (resultado < melhores[c]) {
+            /* Somente uma melhora substitui o recorde persistido da instancia. */
+            melhores[c] = resultado;
         }
-        printf("\nConcluidas: %zu/%zu; falhas: %zu.\n", concluidas, total, total - concluidas);
-        if (concluidas > 0) {
-            printf("Melhor: %.2f min (execucao %zu); media: %.2f min; literatura: %.2f min; gap do melhor: %+.2f%%.\n",
-                   melhor, execucaoMelhor, soma / concluidas, caso->melhorLiteratura,
-                   100.0 * (melhor - caso->melhorLiteratura) / caso->melhorLiteratura);
-            printf("Resultados abaixo da referencia: %zu; iguais: %zu.\n", melhoresLiteratura, iguaisLiteratura);
-            fprintf(resumo, "%s,%zu,%.9f,%.9f,%.9f,%.9f,%zu,%u,%zu,%zu,%s,%.6f\n",
-                    caso->nome, concluidas, melhor, soma / concluidas, caso->melhorLiteratura,
-                    100.0 * (melhor - caso->melhorLiteratura) / caso->melhorLiteratura,
-                    execucaoMelhor, semente + (unsigned int)(c * total + execucaoMelhor - 1),
-                    melhoresLiteratura, iguaisLiteratura,controle?"controle":"exploracao",configuracao.limiteSegundos);
-        } else {
-            fprintf(resumo, "%s,0,,,,,,,,,%s,%.6f\n", caso->nome,controle?"controle":"exploracao",configuracao.limiteSegundos);
+        tempos[c] = segundosAgora() - inicio;
+        liberarInstancia(&inst);
+        if (!salvarRelatorio(melhores, tempos)) {
+            perror("Falha ao salvar " RELATORIO);
+            return EXIT_FAILURE;
         }
-        fflush(resumo);
-        concluidasTotal += concluidas;
+        mostrarResultado(c, resultado, tempos[c]);
+        fflush(stdout);
     }
-    int erroResumo = ferror(resumo);
-    if (fclose(resumo) != 0) erroResumo = 1;
-    size_t esperadas=(filtro?1:totalCasos)*total;
-    printf("\nTOTAL: %zu/%zu execucoes concluidas.\n", concluidasTotal, esperadas);
-    printf("Literatura: melhores solucoes conhecidas; quatro casos sem otimo comprovado na fonte ORLab de 2025.\n");
-    return concluidasTotal == esperadas && !erroResumo ? EXIT_SUCCESS : EXIT_FAILURE;
-uso:
-    fprintf(stderr,"Uso: %s [--controle] [--sem-reparo-cp] [--python-cp caminho] [--script-cp caminho] [--execucoes N] [--segundos S] [--semente N] [--instancia nome]\n",argv[0]);
-    return EXIT_FAILURE;
+    return sucesso ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
+/* Consulta os recordes persistidos sem executar buscas nem alterar o CSV. */
+static int mostrarRecordes(void)
+{
+    if (!prepararDiretorio()) {
+        perror("Falha ao preparar diretorio do executavel");
+        return EXIT_FAILURE;
+    }
+    double melhores[TOTAL_CASOS], tempos[TOTAL_CASOS];
+    for (size_t c = 0; c < TOTAL_CASOS; c++) {
+        melhores[c] = INFINITY;
+        tempos[c] = NAN;
+    }
+    if (!lerRelatorio(melhores, tempos)) return EXIT_FAILURE;
+    printf("%-12s %18s %16s %16s %12s %18s %20s\n", "Instancia", "Melhor algoritmo",
+           "Literatura 2024", "Literatura 2025", "Gap (%)", "Ultima execucao (s)", "Tempo lit. 2025 (s)");
+    for (size_t c = 0; c < TOTAL_CASOS; c++) mostrarResultado(c, melhores[c], tempos[c]);
+    return EXIT_SUCCESS;
+}
+
+/* Ao abrir com duplo clique, conserva a tabela na janela ate pressionar Enter. */
+int main(void)
+{
+    int resultado = MOSTRAR_RECORDES ? mostrarRecordes() : executarLote();
+#ifdef _WIN32
+    DWORD processos[2];
+    if (GetConsoleProcessList(processos, 2) == 1) {
+        fprintf(stderr, "\nPressione Enter para fechar.\n");
+        (void)getchar();
+    }
+#endif
+    return resultado;
 }

@@ -27,9 +27,9 @@ static void conferir(const Instancia *inst, const Solucao *s, Solucao *completa)
 }
 int main(void){
     Instancia inst = {0};
-    assert(lerInstancia("18-r-e.txt", &inst));
+    assert(lerInstancia("instances/pdstsp-c/small/18-r-e.txt", &inst));
     alocarInstancias(&inst); construirMatrizCaminhao(&inst);
-    assert(lerTemposDrone("tau_kj_18-r-e.txt", &inst));
+    assert(lerTemposDrone("instances/pdstsp-c/small/tau_kj_18-r-e.txt", &inst));
     Solucao atual = {0}, vizinho = {0}, completa = {0};
     alocarSolucao(&inst, &atual); alocarSolucao(&inst, &vizinho); alocarSolucao(&inst, &completa);
     assert(construirSolucaoInicial(&inst, &atual));

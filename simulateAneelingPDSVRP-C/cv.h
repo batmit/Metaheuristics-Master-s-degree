@@ -6,7 +6,6 @@
 /* Instancia deve ter clientes carregados. Retornam 1 no sucesso, 0 na falha. */
 int alocarMatrizCaminhao(Instancia *inst);
 int alocarTempoDrone(Instancia *inst);
-int alocarInstancias(Instancia *inst);
 /* Distancia Manhattan, coordenadas em km e velocidade em km/h; saida em min. */
 int construirMatrizCaminhao(Instancia *inst);
 

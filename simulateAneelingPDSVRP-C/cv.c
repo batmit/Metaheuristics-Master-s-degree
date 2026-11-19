@@ -1,7 +1,10 @@
+/* Representacao, custos, validacao integral e cinco movimentos de vizinhanca. */
 #include "cv.h"
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
+/* Aloca matriz completa ou desfaz alocacoes parciais na falta de memoria. */
 static int alocarMatriz(double ***destino, int linhas, int colunas, double valor)
 {
     if (*destino != NULL) return 1;
@@ -20,23 +23,21 @@ static int alocarMatriz(double ***destino, int linhas, int colunas, double valor
     return 1;
 }
 
+/* Reserva a matriz quadrada de tempos entre todos os nos. */
 int alocarMatrizCaminhao(Instancia *inst)
 {
     return inst && inst->n > 0 &&
         alocarMatriz(&inst->tempoCaminhao, inst->n, inst->n, 0.0);
 }
 
+/* Reserva tempos por cliente/k; INFINITY representa combinacao inviavel. */
 int alocarTempoDrone(Instancia *inst)
 {
     return inst && inst->n > 0 && inst->numDrones > 0 &&
         alocarMatriz(&inst->tempoDrone, inst->n, inst->numDrones + 1, INFINITY);
 }
 
-int alocarInstancias(Instancia *inst)
-{
-    return alocarMatrizCaminhao(inst) && alocarTempoDrone(inst);
-}
-
+/* Converte distancia Manhattan e velocidade em tempos de viagem em minutos. */
 int construirMatrizCaminhao(Instancia *inst)
 {
     if (!inst || !inst->clientes || !isfinite(inst->truckSpeed) ||
@@ -50,6 +51,7 @@ int construirMatrizCaminhao(Instancia *inst)
     return 1;
 }
 
+/* Libera os vetores pertencentes a solucao e deixa a estrutura zerada. */
 void liberarSolucao(Solucao *solucao)
 {
     if (!solucao) return;
@@ -58,10 +60,10 @@ void liberarSolucao(Solucao *solucao)
             free(solucao->rotasCaminhao[c].rota);
     free(solucao->rotasCaminhao);
     free(solucao->missaoDrone);
-    free(solucao->prefixosDrone);
     *solucao = (Solucao){0};
 }
 
+/* Cria rotas independentes e espaco para todas as missoes de drones. */
 int alocarSolucao(const Instancia *inst, Solucao *solucao)
 {
     if (!inst || !solucao || inst->n < 1 || inst->numCaminhoes < 1) return 0;
@@ -78,8 +80,7 @@ int alocarSolucao(const Instancia *inst, Solucao *solucao)
         }
     }
     nova.missaoDrone = calloc((size_t)inst->n, sizeof *nova.missaoDrone);
-    nova.prefixosDrone = calloc((size_t)inst->n, sizeof *nova.prefixosDrone);
-    if (!nova.missaoDrone || !nova.prefixosDrone) goto erro;
+    if (!nova.missaoDrone) goto erro;
     nova.makespan = INFINITY;
     *solucao = nova;
     return 1;
@@ -88,14 +89,13 @@ erro:
     return 0;
 }
 
-#include <string.h>
-
+/* Copia profunda para armazenamento ja alocado, sem compartilhar vetores. */
 int copiarSolucao(const Instancia *inst, const Solucao *a, Solucao *b)
 {
     if (!inst || !a || !b || a == b ||
         a->numCaminhoes != inst->numCaminhoes || b->numCaminhoes != inst->numCaminhoes ||
         !a->rotasCaminhao || !b->rotasCaminhao || !a->missaoDrone ||
-        !b->missaoDrone || !a->prefixosDrone || !b->prefixosDrone ||
+        !b->missaoDrone ||
         a->numMissoesDrone < 0 || a->numMissoesDrone >= inst->n) return 0;
     for (int c = 0; c < a->numCaminhoes; ++c) {
         int n = a->rotasCaminhao[c].tamanho;
@@ -111,18 +111,16 @@ int copiarSolucao(const Instancia *inst, const Solucao *a, Solucao *b)
     }
     b->numMissoesDrone = a->numMissoesDrone;
     memcpy(b->missaoDrone, a->missaoDrone, (size_t)a->numMissoesDrone * sizeof *b->missaoDrone);
-    memcpy(b->prefixosDrone, a->prefixosDrone,
-           ((size_t)a->numMissoesDrone + 1) * sizeof *b->prefixosDrone);
     b->makespan = a->makespan;
     b->tempoCaminhoes = a->tempoCaminhoes;
     b->tempoDrones = a->tempoDrones;
     b->cronogramaValido = a->cronogramaValido;
     b->avaliacaoValida = a->avaliacaoValida;
-    b->cronogramaExterno = a->cronogramaExterno;
     b->branchBoundAplicado = a->branchBoundAplicado;
     return 1;
 }
 
+/* Recalcula tempos completos e rejeita falhas de cobertura, duracao ou capacidade. */
 int calcularMakespan(const Instancia *inst, Solucao *s)
 {
     if (!s) return 0;
@@ -188,6 +186,7 @@ fim:
     return ok;
 }
 
+/* Insere clientes distantes primeiro e aplica 2-opt nas rotas dos caminhoes. */
 int construirSolucaoInicial(const Instancia *inst, Solucao *s)
 {
     if (!inst || !s || inst->numCaminhoes < 1 ||
@@ -251,16 +250,19 @@ int construirSolucaoInicial(const Instancia *inst, Solucao *s)
     return escalonarMissoesDrone(inst, s) && calcularMakespan(inst, s);
 }
 
+/* O ultimo vetor logico representa drones; os anteriores representam caminhoes. */
 static int tamanhoVetor(const Solucao *s, int v)
 {
     return v == s->numCaminhoes ? s->numMissoesDrone : s->rotasCaminhao[v].tamanho;
 }
 
+/* Recupera o cliente de uma rota ou de uma missao pelo mesmo indice logico. */
 static int clienteVetor(const Solucao *s, int v, int p)
 {
     return v == s->numCaminhoes ? s->missaoDrone[p].cliente : s->rotasCaminhao[v].rota[p];
 }
 
+/* Consulta o primeiro k permitido na tabela oficial, sem supor monotonicidade. */
 static int quantidadeViavel(const Instancia *inst, int cliente)
 {
     for (int k = 1; k <= inst->numDrones; ++k)
@@ -269,6 +271,7 @@ static int quantidadeViavel(const Instancia *inst, int cliente)
     return 0;
 }
 
+/* Sorteio por reservatorio entre valores de k viaveis, exceto o valor excluido. */
 static int sortearQuantidade(const Instancia *inst, int cliente, int excluir)
 {
     int total = 0, escolhido = 0;
@@ -281,6 +284,7 @@ static int sortearQuantidade(const Instancia *inst, int cliente, int excluir)
     return escolhido;
 }
 
+/* Retorna o tempo de uma aresta; o deposito e implicito nas extremidades. */
 static double aresta(const Instancia *inst, const RotaCaminhao *r, int p)
 {
     int a = p == 0 ? 0 : r->rota[p - 1];
@@ -288,6 +292,7 @@ static double aresta(const Instancia *inst, const RotaCaminhao *r, int p)
     return inst->tempoCaminhao[a][b];
 }
 
+/* Retira um cliente e atualiza apenas as arestas afetadas da rota. */
 static void removerCaminhao(const Instancia *inst, RotaCaminhao *r, int p)
 {
     int a = p == 0 ? 0 : r->rota[p - 1];
@@ -297,6 +302,7 @@ static void removerCaminhao(const Instancia *inst, RotaCaminhao *r, int p)
     if (--r->tamanho == 0) r->tempo = 0;
 }
 
+/* Insere um cliente na posicao escolhida e atualiza o tempo por diferenca. */
 static void inserirCaminhao(const Instancia *inst, RotaCaminhao *r, int p, int j)
 {
     int a = p == 0 ? 0 : r->rota[p - 1];
@@ -307,6 +313,7 @@ static void inserirCaminhao(const Instancia *inst, RotaCaminhao *r, int p, int j
     ++r->tamanho;
 }
 
+/* Sorteia um dos cinco movimentos disponiveis e atualiza os custos afetados. */
 int gerarVizinhoAvaliado(const Instancia *inst, const Solucao *a, Solucao *b, TipoMovimento *tipo)
 {
     if (!inst || !a || !b || !a->avaliacaoValida || !a->cronogramaValido) return -1;
@@ -434,6 +441,4 @@ int gerarVizinhoAvaliado(const Instancia *inst, const Solucao *a, Solucao *b, Ti
     if (tipo) *tipo = movimento;
     return 1;
 }
-
-
 

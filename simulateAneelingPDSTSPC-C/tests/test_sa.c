@@ -8,11 +8,11 @@ int main(void)
 {
     Instancia inst = {0};
     Solucao s = {0};
-    assert(lerInstancia("18-r-e.txt", &inst));
+    assert(lerInstancia("instances/pdstsp-c/small/18-r-e.txt", &inst));
     alocarInstancias(&inst); construirMatrizCaminhao(&inst);
-    assert(lerTemposDrone("tau_kj_18-r-e.txt", &inst));
+    assert(lerTemposDrone("instances/pdstsp-c/small/tau_kj_18-r-e.txt", &inst));
     alocarSolucao(&inst, &s);
-    ParametrosSA p = parametrosSAPadrao();
+    ParametrosSA p = parametrosSARapido();
     double resultado = 0;
     for (int repeticao = 0; repeticao < 2; repeticao++) {
         assert(construirSolucaoInicial(&inst, &s));
@@ -39,7 +39,7 @@ int main(void)
     Instancia pequena = {0}; pequena.n = 3; pequena.tempoCaminhao = tempos;
     alocarSolucao(&pequena, &s);
     assert(construirSolucaoInicial(&pequena, &s));
-    p = parametrosSAPadrao(); p.tempInicial = 1000; p.alpha = 0.5; p.saMax = 20;
+    p = parametrosSARapido(); p.trocasSimultaneas=p.reconstrucaoParcial=p.movimentosGrupo=false; p.maxRetomadas=0; p.tempInicial = 1000; p.alpha = 0.5; p.saMax = 20;
     srand(123);
     assert(simulatedAnnealing(&pequena, &s, &p));
     assert(s.makespan == 3);

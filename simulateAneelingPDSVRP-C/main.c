@@ -1,11 +1,17 @@
+/* Lancador publico e worker interno do SA; certificados ficam no canal capturado pelo Python. */
 #include "lerInstancias.h"
 #include "SA.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <time.h>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#include <sys/wait.h>
+#endif
 
 static void registrarMelhor(const Solucao *s, void *contexto)
 {
@@ -33,49 +39,47 @@ static void registrarMelhor(const Solucao *s, void *contexto)
     fflush(stdout);
 }
 
-static int referencia(const char *arquivo, int frota, double *lb, double *ub, int *provado)
-{
-    const char *nome = arquivo;
-    for (const char *p = arquivo; *p; ++p) if (*p == '/' || *p == '\\') nome = p + 1;
-    char stem[80];
-    if (strlen(nome) >= sizeof stem) return 0;
-    strcpy(stem, nome);
-    char *extensao = strrchr(stem, '.');
-    if (extensao) *extensao = '\0';
-    FILE *f = fopen("instances/literature_pdsvrp_c.csv", "r");
-    if (!f) return 0;
-    char linha[256], id[80];
-    int s, p, achou = 0;
-    double l, u;
-    while (fgets(linha, sizeof linha, f))
-        if (sscanf(linha, "%79[^,],%d,%lf,%lf,%d", id, &s, &l, &u, &p) == 5 &&
-            strcmp(id, stem) == 0 && s == frota) {
-            *lb = l; *ub = u; *provado = p; achou = 1; break;
-        }
-    fclose(f);
-    return achou;
-}
-
-static int executarLote(void)
+/* O executor Python concentra catalogo, tabela e persistencia. O processo C
+ * interno recebe PDSVRP_WORKER e envia apenas certificados pelo stdout. */
+static int executarPython(int argc, char **argv)
 {
 #ifdef _WIN32
-    if (system("python -c \"import sys\" >NUL 2>&1") == 0)
-        return system("python scripts/executar_benchmark.py") == 0 ? 0 : 1;
-    if (system("py -3 -c \"import sys\" >NUL 2>&1") == 0)
-        return system("py -3 scripts/executar_benchmark.py") == 0 ? 0 : 1;
+    const char *interpretes[] = {"python", "python3", "py"};
 #else
-    if (system("python3 -c 'import sys' >/dev/null 2>&1") == 0)
-        return system("python3 scripts/executar_benchmark.py") == 0 ? 0 : 1;
-    if (system("python -c 'import sys' >/dev/null 2>&1") == 0)
-        return system("python scripts/executar_benchmark.py") == 0 ? 0 : 1;
+    const char *interpretes[] = {"python3", "python", "py"};
 #endif
-    fprintf(stderr, "Python 3 nao encontrado. Instale Python 3 ou execute o lote com seu interpretador.\n");
+    char **argumentos = calloc((size_t)argc + 4, sizeof *argumentos);
+    if (!argumentos) return 1;
+    for (int i = 0; i < 3; ++i) {
+        int n = 0;
+        argumentos[n++] = (char *)interpretes[i];
+        if (i == 2) argumentos[n++] = "-3";
+        argumentos[n++] = "scripts/executar_benchmark.py";
+        for (int j = 1; j < argc; ++j) argumentos[n++] = argv[j];
+        argumentos[n] = NULL;
+#ifdef _WIN32
+        intptr_t status = _spawnvp(_P_WAIT, interpretes[i], (const char *const *)argumentos);
+        if (status != -1) { free(argumentos); return status == 0 ? 0 : 1; }
+#else
+        pid_t pid = fork();
+        if (pid == 0) { execvp(interpretes[i], argumentos); _exit(127); }
+        if (pid < 0) { free(argumentos); return 1; }
+        int status;
+        if (waitpid(pid, &status, 0) < 0) { free(argumentos); return 1; }
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 127) {
+            free(argumentos); return WEXITSTATUS(status);
+        }
+#endif
+    }
+    free(argumentos);
+    fprintf(stderr, "Python 3 nao encontrado.\n");
     return 1;
 }
 
+/* Entrada publica chama o executor; entrada interna executa uma unica configuracao. */
 int main(int argc, char **argv)
 {
-    if (argc == 1) return executarLote();
+    if (!getenv("PDSVRP_WORKER")) return executarPython(argc, argv);
     if (argc != 4 && argc != 5) {
         fprintf(stderr, "Uso: %s instancia.txt tau_kj.txt numCaminhoes [semente]\n", argv[0]);
         return 1;
@@ -84,17 +88,6 @@ int main(int argc, char **argv)
     errno = 0;
     long frota = strtol(argv[3], &fim, 10);
     if (errno || !*argv[3] || *fim || frota < 1 || frota > INT_MAX) return 1;
-    double lb, ub;
-    int provado;
-    if (!referencia(argv[1], (int)frota, &lb, &ub, &provado)) {
-        fprintf(stderr, "Configuracao sem referencia verificada; nao executada.\n");
-        return 1;
-    }
-    printf("Literatura: LB=%.6f UB=%.6f otimo_comprovado=%d\n", lb, ub, provado);
-    if (provado) {
-        puts("IGNORADA: otimo comprovado na literatura; SA nao executado.");
-        return 0;
-    }
     unsigned seed = (unsigned)time(NULL);
     if (argc == 5) {
         errno = 0;
@@ -107,33 +100,15 @@ int main(int argc, char **argv)
     Solucao solucao = {0};
     int status = 1;
     ParametrosSA parametros = parametrosSAPadrao();
-    EstatisticasSA estatisticas = {0};
-    parametros.estatisticas = &estatisticas;
     parametros.registrarMelhor = registrarMelhor;
     if (!carregarInstancia(argv[1], argv[2], (int)frota, &inst) ||
         !alocarSolucao(&inst, &solucao) || !construirSolucaoInicial(&inst, &solucao)) goto fim;
-    printf("Semente: %u\nMakespan inicial: %.6f\n", seed, solucao.makespan);
+    /* A construcao inicial ja foi integralmente validada em C. */
     registrarMelhor(&solucao, NULL);
     if (!calculaTemperaturaInicial(&inst, &solucao, parametros.beta, parametros.gamma,
                                   parametros.saMax, &parametros.tempInicial)) goto fim;
-    printf("Temperatura inicial: %.6f\n", parametros.tempInicial);
     if (!simulatedAnnealing(&inst, &solucao, &parametros) ||
         !calcularMakespan(&inst, &solucao)) goto fim;
-    printf("Makespan final: %.6f\n", solucao.makespan);
-    printf("ESTATISTICAS tentativas=%llu niveis=%llu chamadasBB=%llu nosBB=%llu melhoriasBB=%llu bbLimitados=%llu\n",
-           estatisticas.tentativas, estatisticas.niveis, estatisticas.chamadasBB,
-           estatisticas.nosBB, estatisticas.melhoriasBB, estatisticas.bbLimitados);
-    for (int c = 0; c < solucao.numCaminhoes; ++c) {
-        const RotaCaminhao *r = &solucao.rotasCaminhao[c];
-        printf("Caminhao %d (%.6f): 0", c + 1, r->tempo);
-        for (int p = 0; p < r->tamanho; ++p) printf(" %d", inst.clientes[r->rota[p]].id);
-        printf(" 0\n");
-    }
-    for (int i = 0; i < solucao.numMissoesDrone; ++i) {
-        const MissaoDrone *m = &solucao.missaoDrone[i];
-        printf("Drone: cliente=%d quantidade=%d inicio=%.6f fim=%.6f\n",
-               inst.clientes[m->cliente].id, m->qtdDrones, m->tempoInicio, m->tempoFim);
-    }
     status = 0;
 fim:
     if (status) fprintf(stderr, "Falha na carga, construcao, calibracao ou busca.\n");

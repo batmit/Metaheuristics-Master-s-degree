@@ -16,10 +16,6 @@ int gerarVizinhoAvaliadoConfigurado(const Instancia *inst, const Solucao *atual,
                                    TipoMovimento *tipo, bool grupos);
 void construirMatrizCaminhao(Instancia *inst);
 
-void alocarTempoDrone(Instancia *inst);
-
-int alocarMatrizCaminhao(Instancia *inst);
-
 void alocarInstancias(Instancia *inst);
 
 void alocarSolucao(Instancia *inst, Solucao *solucao);
@@ -37,56 +33,19 @@ int trocarRecursosCV(const Instancia *inst, const Solucao *atual, Solucao *vizin
 int reconstruirParcialCV(const Instancia *inst, const Solucao *atual, Solucao *vizinho,
                         double fracaoMinima, double fracaoMaxima);
 
-typedef struct MetricasReparoCV {
-    unsigned long long propostas, podasCarga, podasRota, avaliacoes, melhorias;
-    unsigned long long chamadasCP, sucessosCP, inviaveisCP, limitesCP, errosCP;
-    double segundosNativo, segundosCP;
-} MetricasReparoCV;
-
-/* As metas sao usadas apenas no reparo aspiracional, nunca para proibir
- * estados intermediarios do SA. A discretizacao e verificada nos dados. */
-int metasReparoCV(const Instancia *inst, double melhorGlobal,
-                  double *horizonte, double *limiteCaminhao);
-double limiteCargaReparoCV(const Instancia *inst, const Solucao *s);
-double limiteRotaReparoCV(const Instancia *inst, const Solucao *s);
-int selecionarLivresReparoCV(const Instancia *inst, const Solucao *s,
-                            int *clientes, int capacidade);
-/* Retornos: 1 melhora completa, 0 sem melhora/fora de suporte, -1 erro.
- * entrada e saida precisam ter buffers independentes. Preserva entrada. */
-int repararComMetaCV(const Instancia *inst, const Solucao *entrada,
-                    double melhorGlobal, Solucao *saida, bool cadeias, bool filtros,
-                    int largura, int profundidade, double segundos,
-                    MetricasReparoCV *metricas);
-/* Processo isolado com prazo de parede, incluindo inicializacao Python.
- * O certificado CP e preservado e revalidado; nao e reagendado first-fit.
- * Resultado -1 em dependencias/protocolo invalidos, 0 sem certificado. */
-int repararCPSATCV(const Instancia *inst, const Solucao *entrada,
-                  double melhorGlobal, Solucao *saida, int livres, double segundos,
-                  unsigned seed, const char *python, const char *script,
-                  MetricasReparoCV *metricas);
-
 /* Requer solucao previamente alocada por alocarSolucao para esta instancia.
  * Constroi rota por vizinho mais proximo e melhora por 2-opt, sem missoes
  * de drones. Preserva a rota por indice caso ela seja melhor; avalia ao final.
  * Retorna 1 no sucesso; 0 na falha, com makespan INFINITY. */
 int construirSolucaoInicial(const Instancia *inst, Solucao *solucao);
 
-/* atual deve conter cada cliente uma unica vez. vizinho deve estar alocado
- * por alocarSolucao para a mesma instancia, com vetores independentes.
- * Aplica troca, reinsercao, 2-opt, transferencia ou alteracao de quantidade de drones
- * de uma missao, entre minDrones e numDrones com tempo viavel, sem modificar atual.
- * Retorna 1 no sucesso, com makespan INFINITY e horarios a reconstruir;
- * retorna 0 sem alterar vizinho se nao houver movimento ou os dados forem invalidos.
- * Inicializar srand uma unica vez no programa, nunca a cada chamada. */
-int gerarVizinho(const Instancia *inst, const Solucao *atual, Solucao *vizinho);
-
 /* Requer atual escalonada e avaliada, e ambas alocadas para esta instancia.
  * Instancia e solucao atual nao podem ter sido editadas desde a avaliacao.
  * Atualiza apenas as arestas afetadas e reescala o sufixo de drones alterado.
  * Retorna vizinho com makespan pronto; nao exige avaliacao completa adicional.
  * Falha de avaliacao deixa o vizinho invalidado. A atual permanece intacta.
- * Aceita cronogramas de BB/CP sem cache de prefixos: mudancas apenas na rota
- * preservam os horarios; mudancas nos drones reconstroem o cronograma completo. */
+ * Cronogramas devem ter cache de prefixos valido; mudancas na rota
+ * preservam os horarios dos drones. */
 int gerarVizinhoAvaliado(const Instancia *inst, const Solucao *atual, Solucao *vizinho);
 
 /* Sorteia apenas entre tipos disponiveis, proporcionalmente aos pesos positivos
@@ -131,7 +90,7 @@ double escalonarMissoesDroneBB(const Instancia *inst, MissaoDrone *missoes,
                                int quantidade);
 
 typedef enum MotivoTerminoBB {
-    BB_ERRO, BB_OTIMO, BB_META_ATINGIDA, BB_LIMITE_NOS
+    BB_ERRO, BB_OTIMO, BB_META_ATINGIDA, BB_LIMITE_NOS, BB_LIMITE_TEMPO
 } MotivoTerminoBB;
 
 typedef struct ResultadoBB {
@@ -148,19 +107,19 @@ double escalonarMissoesDroneBBMeta(const Instancia *inst, MissaoDrone *missoes,
                                  int quantidade, unsigned long long maxNos,
                                  double meta, ResultadoBB *resultado);
 
-/* Versao com orcamento de nos para uso dentro do SA. Retorna a melhor solucao
- * encontrada; otimoProvado informa se a busca terminou sem atingir o limite.
- * maxNos=0 significa busca sem limite. Mesma ordem fixa da versao exata.
- * Usa soma de carga por sufixo O(1), perfil de eventos e ramos por menor termino. */
-double escalonarMissoesDroneBBLimitado(const Instancia *inst, MissaoDrone *missoes,
-                                     int quantidade, unsigned long long maxNos,
-                                     bool *otimoProvado);
+/* Prazo absoluto em relogioSA(); zero desativa. Mesma busca de quantidades. */
+double escalonarMissoesDroneBBPrazo(const Instancia *inst, MissaoDrone *missoes,
+    int quantidade, unsigned long long maxNos, double meta, double prazo, ResultadoBB *resultado);
+/* TSP do conjunto fixo do caminhao; preserva incumbente sob limites.
+ * Bound lagrangiano de MST com conexoes (1-tree na raiz), oito passos.
+ * Otimalidade numerica com tolerancia relativa 1e-10; nao do PDSTSP-C inteiro. */
+int otimizarCaminhaoBB(const Instancia *inst, Solucao *s,
+    unsigned long long maxNos, double prazo, ResultadoBB *resultado);
 
 /* Caminhao: clientes sem os depositos inicial/final, implicitos no indice 0.
  * Drones: horarios em minutos e tempoDrone incluindo a missao completa.
  * Retorna 1 para solucao viavel; 0 e makespan INFINITY em caso de erro.
  * Nao escolhe horarios nem quantidades de drones. */
 int calcularMakespan(const Instancia *inst, Solucao *solucao);
-
 
 #endif

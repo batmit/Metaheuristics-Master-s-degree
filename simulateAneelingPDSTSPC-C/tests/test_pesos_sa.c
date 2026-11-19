@@ -5,7 +5,7 @@
 
 int main(void)
 {
-    ParametrosSA p = parametrosSAPadrao();
+    ParametrosSA p = parametrosSARapido();
     assert(p.pesosAdaptativos && p.taxaAdaptacao == 0.2 && p.pesoMinimo == 0.1);
     PesosMovimentosSA e = inicializarPesosMovimentosSA();
     e.tentativas[TROCAR_CAMINHAO] = 10;

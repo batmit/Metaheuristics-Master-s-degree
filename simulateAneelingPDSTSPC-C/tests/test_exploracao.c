@@ -40,7 +40,7 @@ static void inicializar(Instancia *in,Solucao *s)
 
 int main(void)
 {
-    ParametrosSA p=parametrosSAExploracao();assert(validarParametrosSA(&p));
+    ParametrosSA p=parametrosSARapido();assert(validarParametrosSA(&p));
     ParametrosSA errado=p;errado.fracaoMaxima=2;assert(!validarParametrosSA(&errado));
     errado=p;errado.probTroca=NAN;assert(!validarParametrosSA(&errado));
     errado=p;errado.probReconstrucao=.4;assert(!validarParametrosSA(&errado));
@@ -101,12 +101,12 @@ int main(void)
     srand(921);assert(calculaTemperaturaInicial(&in,&a,&p,&t2));assert(t1==t2 && t1>p.tempFinal);
     EstatisticasSA e={0};p.estatisticas=&e;
     srand(123);assert(resolverComCalibracaoSA(&in,&a,&p,&t1));verificar(&in,&a);
-    assert(a.makespan<=original && e.trocas>0 && e.reconstrucoes>0 && e.retomadas==1);
+    assert(a.makespan<=original && e.trocas+e.reconstrucoes<=e.avaliacoes/80 && e.retomadas==1);
     assert(e.atribuicoesElite>1);double obtido=a.makespan;
     inicializar(&in,&a);srand(123);
     assert(resolverComCalibracaoSA(&in,&a,&p,&t2));assert(a.makespan==obtido);
-    /* OrÃ§amento total inclui calibracao e termina com certificado completo. */
-    p.limiteSegundos=.08;inicializar(&in,&a);
+    /* Orçamento total inclui calibracao e termina com certificado completo. */
+    p.limiteSegundos=.08;p.alpha=.99999;p.niveisParada=0;inicializar(&in,&a);
     double inicio=relogioSA();assert(resolverComCalibracaoSA(&in,&a,&p,&t1));
     assert(relogioSA()-inicio<2 && e.terminouPorTempo);verificar(&in,&a);
     liberarSolucao(&a);liberarSolucao(&b);liberarSolucao(&c);

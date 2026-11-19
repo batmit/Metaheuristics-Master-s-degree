@@ -19,7 +19,6 @@ int main(void)
     assert(atual.makespan==6);
     for(int i=0;i<5;i++) assert(atual.missaoCaminhao[i].n==ciclo[i+1]);
     assert(escalonarMissoesDrone(&inst,&atual)); assert(calcularMakespan(&inst,&atual));
-    atual.branchBoundAplicado=true;
     int vistos[NUM_MOVIMENTOS]={0};
     srand(123);
     for(int passo=0;passo<3000;passo++) {
@@ -31,7 +30,7 @@ int main(void)
         assert(tipo==TROCAR_CAMINHAO || tipo==REINSERIR_CAMINHAO || tipo==DOIS_OPT_CAMINHAO);
         vistos[tipo]++;
         assert(memcmp(antes,atual.missaoCaminhao,sizeof antes)==0);
-        assert(vizinho.branchBoundAplicado && vizinho.cronogramaValido);
+        assert(vizinho.cronogramaValido);
         double incremental=vizinho.makespan;
         assert(calcularMakespan(&inst,&vizinho));
         assert(fabs(incremental-vizinho.makespan)<1e-8);

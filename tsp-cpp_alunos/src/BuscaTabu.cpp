@@ -29,7 +29,39 @@ double melhorVizinhoTabu(const Instancia &inst, std::vector<int> &s, double fo,
 {
     int n = inst.n;
     double foMelhorVizinho = std::numeric_limits<double>::max();
+    melhorI = -1;
+    melhorJ = -1;
+    for(int i = 0; i < n; i++){
 
+        
+        for(int j = i+1; j < n; j++){
+
+
+            //No delta eu apenas calculo o custo das arestas
+
+            double deltaAntigo = calculaDelta(inst, s, i, j);
+            std::swap(s[i], s[j]);
+            double deltaNovo = calculaDelta(inst, s, i, j);
+            std::swap(s[i], s[j]);
+
+
+            double novoValor = fo + deltaNovo - deltaAntigo;
+
+            if(novoValor < foMelhorVizinho && (!estaNaListaTabu(i, j, listaTabu) || novoValor < foEstrela)){
+                melhorI = i;
+                melhorJ = j;
+
+                foMelhorVizinho = novoValor;
+
+            }
+
+
+
+
+
+        }
+
+    }
     
     return foMelhorVizinho;
 }
@@ -65,6 +97,46 @@ double buscaTabu(const Instancia &inst, std::vector<int> &s,
     const int iterMaxAbsoluto = 100000;
 
     // TODO
+    
+    int i, j;
+
+    while((iterBT - melhorIter < btMax) && iterBT < iterMaxAbsoluto){
+
+        iterBT++;
+
+        fo = melhorVizinhoTabu(inst, s, fo, i, j, foEstrela, listaTabu);
+        if(i == -1 || j == -1){
+            break;
+        }
+        std::swap(s[i], s[j]);
+
+        std::pair<int, int> par;
+        par.first = i;
+        par.second = j;
+
+        if(tamanhoMaximoLista > 0){
+            if(listaTabu.size() >= static_cast<std::size_t>(tamanhoMaximoLista)){
+
+                listaTabu.pop_front();
+
+            }
+            listaTabu.push_back(par);
+
+        }
+
+
+
+        if(fo < foEstrela){
+
+            sEstrela = s;
+            melhorIter = iterBT;
+            foEstrela = fo;
+
+        }
+
+
+    }
+
 
     s = sEstrela;
     registraProgresso(arquivoLog, 0.0, iterBT, fo);

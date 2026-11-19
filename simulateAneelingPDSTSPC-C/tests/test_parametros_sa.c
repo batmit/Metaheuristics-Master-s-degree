@@ -5,16 +5,14 @@
 
 int main(void)
 {
-    ParametrosSA padrao = parametrosSAPadrao();
-    assert(padrao.beta == 1.1 && padrao.gamma == 0.95 && padrao.saMax == 500);
+    ParametrosSA padrao = parametrosSARapido();
+    assert(padrao.gamma == 0.8 && padrao.saMax == 500);
     assert(validarParametrosSA(&padrao));
     assert(!validarParametrosSA(NULL));
     ParametrosSA p = padrao;
     p.alpha = 0; assert(!validarParametrosSA(&p));
     p.alpha = 1; assert(!validarParametrosSA(&p));
     p.alpha = NAN; assert(!validarParametrosSA(&p));
-    p = padrao; p.beta = 1; assert(!validarParametrosSA(&p));
-    p.beta = INFINITY; assert(!validarParametrosSA(&p));
     p = padrao; p.gamma = 0; assert(!validarParametrosSA(&p));
     p.gamma = 1; assert(!validarParametrosSA(&p));
     p.gamma = NAN; assert(!validarParametrosSA(&p));

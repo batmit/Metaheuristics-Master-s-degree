@@ -1,3 +1,4 @@
+/* Escalonamento de missoes com recurso cumulativo e quantidades de drones fixas. */
 #include "cv.h"
 #include <math.h>
 #include <stdlib.h>
@@ -7,6 +8,7 @@
 typedef struct EventoDrone { double tempo; int delta; } EventoDrone;
 typedef struct PerfilDrone { EventoDrone *eventos; int quantidade; } PerfilDrone;
 
+/* Insere inicio/fim ordenado; eventos no mesmo instante somam suas variacoes. */
 static void inserirEventoDrone(PerfilDrone *p, double tempo, int delta)
 {
     int i=0;
@@ -23,6 +25,7 @@ static void inserirEventoDrone(PerfilDrone *p, double tempo, int delta)
     }
 }
 
+/* Reserva k drones no intervalo [inicio,fim), permitindo reutilizacao no termino. */
 static void ocuparPerfilDrone(PerfilDrone *p, double inicio, double fim, int drones)
 {
     if(inicio==fim) return;
@@ -128,6 +131,7 @@ static bool estadoRepetidoBB(BuscaBB *b, const PerfilDrone *p)
     return false;
 }
 
+/* Le a duracao oficial apenas para a quantidade fixa da missao. */
 static double duracaoBB(const BuscaBB *b, int i, int k)
 {
     if (k != b->quantidades[i]) return INFINITY;
@@ -176,11 +180,9 @@ static void explorarBB(BuscaBB *b, int nivel, double maximo, long double fixada)
     if (estadoRepetidoBB(b, pai)) return;
     /* Cada tarefa ainda precisa terminar, mesmo ignorando as outras restantes. */
     for (int i = 0; i < b->n; ++i) if (!b->usado[i]) {
-        double menor = INFINITY;
-        for (int k = b->quantidades[i]; k <= b->quantidades[i]; ++k) {
-            double t = duracaoBB(b, i, k);
-            if (isfinite(t)) menor = fmin(menor, primeiroInicioPerfil(pai, b->frota, t, k) + t);
-        }
+        int k = b->quantidades[i];
+        double t = duracaoBB(b, i, k);
+        double menor = primeiroInicioPerfil(pai, b->frota, t, k) + t;
         if (menor >= b->superior) return;
     }
     for (int i = 0; i < b->n; ++i) if (!b->usado[i]) {
@@ -188,23 +190,21 @@ static void explorarBB(BuscaBB *b, int nivel, double maximo, long double fixada)
         for (int j = 0; j < i; ++j)
             if (!b->usado[j] && tarefasIguaisBB(b, i, j)) { simetrica = true; break; }
         if (simetrica) continue;
+        int k = b->quantidades[i];
+        double t = duracaoBB(b, i, k);
+        double inicio = primeiroInicioPerfil(pai, b->frota, t, k), fim = inicio + t;
+        if (!isfinite(fim) || fim >= b->superior) continue;
         b->usado[i] = true;
-        for (int k = b->quantidades[i]; k <= b->quantidades[i]; ++k) {
-            double t = duracaoBB(b, i, k);
-            if (!isfinite(t)) continue;
-            double inicio = primeiroInicioPerfil(pai, b->frota, t, k), fim = inicio + t;
-            if (!isfinite(fim) || fim >= b->superior) continue;
-            b->parcial[nivel] = (MissaoDrone){b->clientes[i], k, inicio, fim};
-            PerfilDrone *filho = &b->perfis[nivel + 1];
-            filho->quantidade = pai->quantidade;
-            memcpy(filho->eventos, pai->eventos, (size_t)pai->quantidade * sizeof *pai->eventos);
-            ocuparPerfilDrone(filho, inicio, fim, k);
-            long double carga = nextafterl(fixada +
-                nextafterl((long double)k * t, -INFINITY), -INFINITY);
-            explorarBB(b, nivel + 1, fmax(maximo, fim), carga);
-            if (b->interrompida || b->metaAtingida) { b->usado[i]=false; return; }
-        }
+        b->parcial[nivel] = (MissaoDrone){b->clientes[i], k, inicio, fim};
+        PerfilDrone *filho = &b->perfis[nivel + 1];
+        filho->quantidade = pai->quantidade;
+        memcpy(filho->eventos, pai->eventos, (size_t)pai->quantidade * sizeof *pai->eventos);
+        ocuparPerfilDrone(filho, inicio, fim, k);
+        long double carga = nextafterl(fixada +
+            nextafterl((long double)k * t, -INFINITY), -INFINITY);
+        explorarBB(b, nivel + 1, fmax(maximo, fim), carga);
         b->usado[i] = false;
+        if (b->interrompida || b->metaAtingida) return;
     }
 }
 
@@ -218,17 +218,16 @@ static int incumbenteBB(BuscaBB *b)
         int tarefa = -1, quantidade = 0;
         double melhorFim = INFINITY, melhorInicio = 0;
         long double menorCarga = INFINITY;
-        for (int i = 0; i < b->n; ++i) if (!b->usado[i])
-            for (int k = b->quantidades[i]; k <= b->quantidades[i]; ++k) {
-                double t = duracaoBB(b, i, k);
-                if (!isfinite(t)) continue;
-                double inicio = primeiroInicioPerfil(p, b->frota, t, k), fim = inicio + t;
-                long double carga = (long double)k * t;
-                if (fim < melhorFim || (fim == melhorFim && carga < menorCarga)) {
-                    tarefa = i; quantidade = k; melhorFim = fim;
-                    melhorInicio = inicio; menorCarga = carga;
-                }
+        for (int i = 0; i < b->n; ++i) if (!b->usado[i]) {
+            int k = b->quantidades[i];
+            double t = duracaoBB(b, i, k);
+            double inicio = primeiroInicioPerfil(p, b->frota, t, k), fim = inicio + t;
+            long double carga = (long double)k * t;
+            if (fim < melhorFim || (fim == melhorFim && carga < menorCarga)) {
+                tarefa = i; quantidade = k; melhorFim = fim;
+                melhorInicio = inicio; menorCarga = carga;
             }
+        }
         if (tarefa < 0 || !isfinite(melhorFim)) return 0;
         b->usado[tarefa] = true;
         b->melhor[nivel] = (MissaoDrone){b->clientes[tarefa], quantidade, melhorInicio, melhorFim};
@@ -263,6 +262,7 @@ static bool avaliarOrdemIncumbenteBB(BuscaBB *b, const int *ordem)
 /* Limites superiores deterministas mais fortes antes da enumeracao: ordens
  * por duracao/carga/demanda e trocas locais da melhor ordem. Nao sorteia k
  * nem substitui a prova do BB quando a meta dos caminhoes nao e atingida. */
+/* Testa sete prioridades e trocas locais para fornecer um bom limite superior. */
 static void melhorarIncumbenteBB(BuscaBB *b)
 {
     int *ordem=malloc((size_t)b->n*sizeof *ordem);
@@ -334,13 +334,14 @@ static double limiteEstruturalBB(const BuscaBB *b)
     return (double)melhor;
 }
 
+/* Implementacao comum ao guloso e ao BB; publica somente um cronograma completo. */
 static int escalonarInterno(const Instancia *inst, Solucao *s, ResultadoBB *resultado,
                            bool busca, double meta, unsigned long long maxNos)
 {
     if (resultado) *resultado = (ResultadoBB){0};
     if (!inst || !s || inst->n < 1 || inst->numDrones < 1 ||
         s->numMissoesDrone < 0 || s->numMissoesDrone >= inst->n ||
-        !s->missaoDrone || !s->prefixosDrone || !inst->tempoDrone) return 0;
+        !s->missaoDrone || !inst->tempoDrone) return 0;
     BuscaBB b = {0};
     b.inst = inst; b.n = s->numMissoesDrone; b.frota = inst->numDrones;
     b.inteiros = true;
@@ -349,9 +350,9 @@ static int escalonarInterno(const Instancia *inst, Solucao *s, ResultadoBB *resu
     int sucesso = 0;
     double inferior = 0;
     if (!b.n) {
-        s->tempoDrones = 0; s->prefixosDrone[0] = 0;
+        s->tempoDrones = 0;
         s->cronogramaValido = true; s->avaliacaoValida = false;
-        s->makespan = INFINITY; s->branchBoundAplicado = true; s->cronogramaExterno = false;
+        s->makespan = INFINITY; s->branchBoundAplicado = true;
         if (resultado) resultado->otimoProvado = true;
         return 1;
     }
@@ -384,15 +385,11 @@ static int escalonarInterno(const Instancia *inst, Solucao *s, ResultadoBB *resu
     }
     for (int i = 0; i < b.n; ++i) {
         if (i && b.clientes[i] == b.clientes[i - 1]) goto fim;
-        long double menor = INFINITY;
-        for (int k = b.quantidades[i]; k <= b.quantidades[i]; ++k) {
-            double t = duracaoBB(&b, i, k);
-            if (!isfinite(t)) continue;
-            if (floor(t) != t) b.inteiros = false;
-            menor = fminl(menor, nextafterl((long double)k * t, -INFINITY));
-        }
-        if (!isfinite(menor)) goto fim;
-        b.minCarga[i] = menor;
+        int k = b.quantidades[i];
+        double t = duracaoBB(&b, i, k);
+        if (!isfinite(t)) goto fim;
+        if (floor(t) != t) b.inteiros = false;
+        b.minCarga[i] = nextafterl((long double)k * t, -INFINITY);
     }
     for (size_t i = 0; i < niveis; ++i) b.perfis[i].eventos = b.eventos + i * capacidade;
     inferior = (double)limiteCargaBB(&b, 0);
@@ -411,12 +408,9 @@ static int escalonarInterno(const Instancia *inst, Solucao *s, ResultadoBB *resu
         }
     }
     memcpy(s->missaoDrone, b.melhor, n * sizeof *s->missaoDrone);
-    s->prefixosDrone[0] = 0;
-    for (int i = 0; i < b.n; ++i)
-        s->prefixosDrone[i + 1] = fmax(s->prefixosDrone[i], s->missaoDrone[i].tempoFim);
     s->tempoDrones = b.superior;
     s->cronogramaValido = true; s->branchBoundAplicado = busca;
-    s->cronogramaExterno = false; s->avaliacaoValida = false; s->makespan = INFINITY;
+    s->avaliacaoValida = false; s->makespan = INFINITY;
     if (resultado) *resultado = (ResultadoBB){b.nos, inferior,
         busca && ((!b.metaAtingida && !b.interrompida) || inferior >= b.superior),
         b.metaAtingida, b.interrompida};
@@ -429,27 +423,30 @@ fim:
     return sucesso;
 }
 
+/* Cronograma guloso rapido para avaliar os vizinhos do SA. */
 int escalonarMissoesDrone(const Instancia *inst, Solucao *s)
 {
     return escalonarInterno(inst, s, NULL, false, -1, 0);
 }
 
+/* Busca sem teto de nos, usada pelos testes de otimalidade em casos pequenos. */
 int escalonarMissoesDroneBB(const Instancia *inst, Solucao *s, ResultadoBB *r)
 {
     return escalonarInterno(inst, s, r, true, -1, 0);
 }
 
+/* Busca ate provar otimo dos drones ou atingir a meta dos caminhoes. */
 int escalonarMissoesDroneBBMeta(const Instancia *inst, Solucao *s, double meta, ResultadoBB *r)
 {
     if (!isfinite(meta) || (meta < 0 && meta != -1)) return 0;
     return escalonarInterno(inst, s, r, true, meta, 0);
 }
 
+/* Versao usada no SA: preserva cronograma viavel ao atingir o teto de nos. */
 int escalonarMissoesDroneBBLimitado(const Instancia *inst, Solucao *s, double meta,
                                   unsigned long long maxNos, ResultadoBB *r)
 {
     if (!isfinite(meta) || (meta<0 && meta!=-1)) return 0;
     return escalonarInterno(inst,s,r,true,meta,maxNos);
 }
-
 

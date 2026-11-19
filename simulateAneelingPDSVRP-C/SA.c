@@ -1,17 +1,30 @@
+/* Simulated Annealing com calibracao de temperatura e refinamento periodico por BB. */
 #include "SA.h"
 #include <math.h>
 #include <stdlib.h>
 
+/* Sorteia em [0,1), usado no criterio de aceitacao de Metropolis. */
 static double uniforme(void)
 {
     return (double)rand() / ((double)RAND_MAX + 1.0);
 }
 
+/* Antes de emitir um resultado, recalcula rotas, cobertura e capacidade.
+ * O executor Python faz uma segunda verificacao independente ao recebe-lo. */
+static int registrarValidado(const Instancia *inst, Solucao *s, const ParametrosSA *p)
+{
+    if (!calcularMakespan(inst, s)) return 0;
+    if (p->registrarMelhor) p->registrarMelhor(s, p->contextoRegistro);
+    return 1;
+}
+
+/* Parametros do resfriamento, aquecimento e numero de tentativas por nivel. */
 ParametrosSA parametrosSAPadrao(void)
 {
     return (ParametrosSA){0.99, 1.1, 0.95, 500, 10.0, 0.01, NULL, NULL, NULL};
 }
 
+/* Aquece sobre uma referencia fixa ate aceitar a proporcao gamma de vizinhos. */
 int calculaTemperaturaInicial(const Instancia *inst, const Solucao *referencia,
                              double beta, double gamma, int saMax,
                              double *temperatura)
@@ -46,6 +59,7 @@ fim:
     return sucesso;
 }
 
+/* Mantem estado atual e melhor separado; resfria e refina o melhor por BB. */
 int simulatedAnnealing(const Instancia *inst, Solucao *solucao,
                       const ParametrosSA *p)
 {
@@ -76,7 +90,7 @@ int simulatedAnnealing(const Instancia *inst, Solucao *solucao,
                 if (atual.makespan < melhor.makespan) {
                     if (!copiarSolucao(inst, &atual, &melhor)) goto fim;
                     semMelhora = 0;
-                    if (p->registrarMelhor) p->registrarMelhor(&melhor, p->contextoRegistro);
+                    if (!registrarValidado(inst, &melhor, p)) goto fim;
                 }
             }
             if (semMelhora >= 5) {
@@ -94,7 +108,7 @@ int simulatedAnnealing(const Instancia *inst, Solucao *solucao,
                     if (melhor.makespan < anterior) {
                         ++estatisticas.melhoriasBB;
                         if (!copiarSolucao(inst, &melhor, &atual)) goto fim;
-                        if (p->registrarMelhor) p->registrarMelhor(&melhor, p->contextoRegistro);
+                        if (!registrarValidado(inst, &melhor, p)) goto fim;
                     }
                 }
             }

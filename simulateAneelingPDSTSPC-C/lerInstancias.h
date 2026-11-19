@@ -20,8 +20,7 @@
 int lerInstancia(const char *nomeArquivo, Instancia *inst);
 int lerTemposDrone(const char *nomeArquivo, Instancia *inst);
 
-/* Funcoes auxiliares para testar e liberar a instancia. */
-void imprimirInstancia(const Instancia *inst);
+/* Libera clientes e matrizes, inclusive apos falhas de leitura. */
 void liberarInstancia(Instancia *inst);
 
 #endif

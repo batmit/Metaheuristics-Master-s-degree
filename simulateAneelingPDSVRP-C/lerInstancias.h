@@ -32,8 +32,7 @@ int lerTemposDrone(const char *nomeArquivo, Instancia *inst);
 int carregarInstancia(const char *nomeArquivo, const char *arquivoTempos,
                      int numCaminhoes, Instancia *inst);
 
-/* Funcoes auxiliares para testar e liberar a instancia. */
-void imprimirInstancia(const Instancia *inst);
+/* Libera clientes e matrizes; pode ser chamada novamente sobre a struct zerada. */
 void liberarInstancia(Instancia *inst);
 
 #endif

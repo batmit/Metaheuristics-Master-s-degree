@@ -1,5 +1,13 @@
 # Instâncias para o PDSVRP-C
 
+Atualização de 06/11/2026: a coleta descrita abaixo foi complementada por um
+recálculo físico das 60 matrizes. Houve 38.448 coincidências em 38.450 entradas;
+duas diferenças conservadoras foram preservadas nos arquivos oficiais. A
+126-rc-e coincidiu integralmente. Veja a auditoria em
+`docs/auditorias/fisica.md`, os dados em `docs/auditorias/tabelas_fisicas.json` e
+o script `scripts/auditar_conformidade_pdsvrpc.py`. A equivalência com a matriz
+exata dos experimentos PDSVRP-C de 2024 continua sem comprovação.
+
 Coleta em 30/10/2026. Foram localizadas e baixadas as 60 instâncias do
 benchmark original: 30 pequenas (15–30 clientes) e 30 grandes (50–200 clientes).
 Também foram obtidas 60 tabelas oficiais de tempos de drones já calculados.
@@ -22,9 +30,10 @@ de que inexistam outros conjuntos privados ou publicados em outros locais.
 - `original/Upload-SuperDrone/bks.txt`: soluções do PDSTSP-C (um caminhão).
   Não interpretar esses valores como BKS do PDSVRP-C com vários caminhões.
 - `archives/`: pacotes ZIP oficiais preservados e página HTML da coleta adicional.
-- `additional_2025/`: extração integral do pacote mais recente, incluindo dados
-  de PDSOP-C, logs e resultados. Dados de lucro/orienteering não fazem parte
-  do benchmark PDSVRP-C usado aqui.
+- O pacote de 2025 permanece em `archives/pdstsp-c-pdsop-c-2025.zip`.
+  A extração `additional_2025/` foi removida: continha cópias dos dados,
+  logs e arquivos de outros modelos, sem uso na execução. O validador compara
+  instâncias e tempos diretamente com o ZIP, sem precisar extraí-lo.
 
 ## Como ler os dados
 
@@ -81,8 +90,9 @@ as 60 instâncias com essas quantidades de caminhões.
 
 ## Validação
 
-Execute `python scripts/validate_instances.py` a partir da raiz do projeto.
+Execute `python3 scripts/validate_instances.py` no Linux ou
+`python scripts/validate_instances.py` no Windows, na raiz do projeto.
 O script verifica contagens, IDs, dimensões das tabelas, valores permitidos,
-identidade das instâncias dos dois pacotes e gera `inventory.csv`.
+identidade byte a byte das instâncias e tabelas com o pacote de 2025 e gera `inventory.csv`.
 Resultado da coleta: 60 instâncias, 60 tabelas e 4.316 clientes no total.
 Isso valida integridade estrutural; não reproduz o cálculo físico dos tempos.

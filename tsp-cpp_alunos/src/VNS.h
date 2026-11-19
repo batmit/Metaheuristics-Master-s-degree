@@ -30,4 +30,6 @@ double geraUmVizinhoAleatorio(const Instancia &inst, std::vector<int> &s, double
 // sobre s. Usado como "shaking" da k-ésima vizinhança do VNS.
 double geraKVizinhosAleatorios(const Instancia &inst, std::vector<int> &s, double fo, int k);
 
+double gvns( const Instancia &inst, std::vector<int> &s, int vnsMax, int r);
+
 #endif // VNS_H
